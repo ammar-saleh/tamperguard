@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TamperGuard — Plain HTML</title>
+  <!-- Guard loads first so it can snapshot the page before anything else. -->
+  <script src="../guard/guard.js"></script>
+  <style>
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: #f5f5f7; color: #16161a; line-height: 1.5;
+    }
+    @media (prefers-color-scheme: dark) {
+      body { background: #0f0f14; color: #e8e8ea; }
+      .card { background: #1a1a22 !important; border-color: #2a2a35 !important; }
+      .hint { background: #15151c !important; }
+      code { background: #2a2a35 !important; }
+    }
+    .wrap { max-width: 680px; margin: 0 auto; padding: 32px 20px 64px; }
+    h1 { font-size: 26px; margin: 0 0 4px; }
+    .sub { opacity: .65; margin: 0 0 28px; }
+    .card {
+      background: #fff; border: 1px solid #e2e2e8; border-radius: 14px;
+      padding: 22px; margin: 16px 0;
+    }
+    .badge {
+      display: inline-block; font-size: 12px; font-weight: 600;
+      padding: 3px 9px; border-radius: 999px; background: #e6f5ea; color: #137a3a;
+    }
+    .price { font-size: 28px; font-weight: 700; margin: 10px 0 2px; }
+    .hint { background: #eef0f4; border-radius: 10px; padding: 14px 16px; font-size: 14px; }
+    code { background: #e7e7ee; padding: 1px 6px; border-radius: 5px; font-size: 13px; }
+    button {
+      margin-top: 14px; padding: 9px 16px; border: 0; border-radius: 8px;
+      background: #2563eb; color: #fff; font-size: 14px; font-weight: 600; cursor: pointer;
+    }
+    .clock { font-variant-numeric: tabular-nums; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Plain HTML demo</h1>
+    <p class="sub">The box below is protected. The clock is not.</p>
+
+    <!-- PROTECTED: edit anything in here from DevTools and the wall appears. -->
+    <div class="card" data-guard>
+      <span class="badge">Verified price</span>
+      <div class="price">$1,299.00</div>
+      <div>Account tier: <strong>Standard</strong></div>
+    </div>
+
+    <!-- NOT protected: proves the app keeps working and changing normally. -->
+    <div class="card">
+      <div>Live clock (unprotected, updates every second):</div>
+      <div class="clock" id="clock">--:--:--</div>
+      <button id="legit">Make a legit change to the protected box</button>
+    </div>
+
+    <div class="hint">
+      <strong>Try it:</strong> open DevTools, pick any text inside the protected
+      box (e.g. change <code>$1,299.00</code> or <code>Standard</code> &rarr;
+      <code>Admin</code>), and edit it. The page locks instantly.<br><br>
+      The <strong>button</strong> changes the same box the "legit" way — it calls
+      <code>guard.rebaseline()</code> afterward, so an approved change is accepted
+      without locking.
+    </div>
+  </div>
+
+  <script>
+    // Start guarding once the DOM is ready.
+    var guard = new TamperGuard({ selector: '[data-guard]' });
+    document.addEventListener('DOMContentLoaded', function () {
+      guard.start();
+
+      // Unprotected live clock.
+      var clock = document.getElementById('clock');
+      setInterval(function () {
+        clock.textContent = new Date().toLocaleTimeString();
+      }, 1000);
+
+      // A change WE make, followed by rebaseline() = no false alarm.
+      document.getElementById('legit').addEventListener('click', function () {
+        document.querySelector('[data-guard] .price').textContent = '$999.00';
+        guard.rebaseline();
+      });
+    });
+  </script>
+</body>
+</html>
