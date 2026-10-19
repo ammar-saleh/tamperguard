@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TamperGuard — React</title>
+  <script src="../../dist/tamperguard.umd.js"></script>
+  <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.26.4/babel.min.js"></script>
+  <style>
+    :root{color-scheme:light dark;--bg:#f5f5f7;--fg:#16161a;--card:#fff;--line:#e2e2e8;--muted:#6b6b76;--accent:#2563eb}
+    @media (prefers-color-scheme:dark){:root{--bg:#0f0f14;--fg:#e8e8ea;--card:#1a1a22;--line:#2a2a35;--muted:#9a9aa6}}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:1.5}
+    .wrap{max-width:640px;margin:0 auto;padding:32px 20px 64px}
+    a.back{color:var(--muted);text-decoration:none;font-size:14px}
+    h1{font-size:26px;margin:10px 0 4px}.sub{color:var(--muted);margin:0 0 24px}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px;margin:16px 0}
+    .badge{display:inline-block;font-size:12px;font-weight:600;padding:3px 9px;border-radius:999px;background:#e6f5ea;color:#137a3a}
+    .price{font-size:28px;font-weight:700;margin:10px 0 2px}
+    .hint{background:var(--line);border-radius:10px;padding:14px 16px;font-size:14px}
+    code{background:var(--line);padding:1px 6px;border-radius:5px;font-size:13px}
+    button{margin-top:14px;padding:9px 16px;border:0;border-radius:8px;background:var(--accent);color:#fff;font-size:14px;font-weight:600;cursor:pointer}
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    function App() {
+      const [count, setCount] = useState(0); // live React state — NOT guarded
+
+      useEffect(() => {
+        const guard = new TamperGuard({ selector: '#protected' });
+        guard.start();
+        return () => guard.stop();
+      }, []);
+
+      return (
+        <div className="wrap">
+          <a className="back" href="../index.html">← all demos</a>
+          <h1>React demo</h1>
+          <p className="sub">The protected box is static. The counter is live React state.</p>
+
+          <div className="card" id="protected" data-guard>
+            <span className="badge">Verified price</span>
+            <div className="price">$1,299.00</div>
+            <div>Account tier: <strong>Standard</strong></div>
+          </div>
+
+          <div className="card">
+            <div>React counter (unprotected): <strong>{count}</strong></div>
+            <button onClick={() => setCount(c => c + 1)}>Increment</button>
+          </div>
+
+          <div className="hint">
+            Edit the protected box in DevTools → it locks. The counter keeps
+            re-rendering with no false alarm.<br/><br/>
+            <strong>Framework note:</strong> guard static regions, or call
+            <code>guard.rebaseline()</code> after a legitimate re-render inside a
+            guarded region.
+          </div>
+        </div>
+      );
+    }
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

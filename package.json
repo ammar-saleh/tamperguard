@@ -1,0 +1,53 @@
+{
+  "name": "tamperguard",
+  "version": "0.1.0",
+  "description": "Zero-dependency client-side integrity monitor: watch the DOM and lock or report the page when it is modified.",
+  "main": "./dist/tamperguard.umd.js",
+  "module": "./dist/tamperguard.mjs",
+  "browser": "./dist/tamperguard.umd.js",
+  "unpkg": "./dist/tamperguard.umd.js",
+  "jsdelivr": "./dist/tamperguard.umd.js",
+  "types": "./types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "import": "./dist/tamperguard.mjs",
+      "require": "./dist/tamperguard.umd.js",
+      "default": "./dist/tamperguard.umd.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "types",
+    "LICENSE",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "serve": "node scripts/serve.mjs",
+    "prepublishOnly": "node scripts/build.mjs"
+  },
+  "keywords": [
+    "tamper",
+    "tamper-detection",
+    "integrity",
+    "dom",
+    "mutationobserver",
+    "security",
+    "anti-tamper",
+    "client-side",
+    "devtools"
+  ],
+  "author": "asaleh123",
+  "license": "MIT",
+  "homepage": "https://github.com/asaleh123/tamperguard#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/asaleh123/tamperguard.git"
+  },
+  "bugs": {
+    "url": "https://github.com/asaleh123/tamperguard/issues"
+  }
+}
