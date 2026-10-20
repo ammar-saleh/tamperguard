@@ -62,6 +62,6 @@ See Vue's [update timing](https://vuejs.org/api/general.html#nexttick) and [life
 
 ## SSR, hydration, routing and asynchronous work
 
-ESM/CommonJS imports and construction are safe without `window`. Start only on the client after the guarded DOM and ancestor attributes have stabilized. Hydration may replace or annotate elements. Routing should destroy the old guard and establish a deliberately chosen baseline on the new screen.
+ESM/CommonJS imports and construction are safe without `window`. Start only on the client after the guarded DOM and ancestor attributes have stabilized, and after error-monitoring, analytics or session-replay SDKs have initialized: many of them wrap `addEventListener`, timers or input setters, which the default environment audit reports. If such an SDK loads lazily, either start the guard after it or set `watchEnvironment: false`. Hydration may replace or annotate elements. Routing should destroy the old guard and establish a deliberately chosen baseline on the new screen.
 
 `update()` accepts synchronous work only. Do not use `await` inside it, hold a monitoring pause across a network request, or rebaseline after arbitrary background activity. Fetch/validate data first, then accept the specific DOM commit. Other code running during that commit can still change the page; the library cannot cryptographically distinguish it.

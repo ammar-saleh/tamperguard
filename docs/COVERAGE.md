@@ -30,7 +30,8 @@ The baseline is captured by `start()`, `rebaseline()`, or a successful `update()
 | Event listeners, expando properties, JS state | Not inspected | Strict mutation history detects same-markup descendant replacement, but does not inspect listeners or arbitrary JS state. |
 | Change and restore before delivery | Strict history for observed DOM | `watchMutations` catches recorded text/attribute/structural changes. Restored property/CSSOM changes and unobserved fragments can still be missed. |
 | More than 10,000 queued records | Overflow signal | Processing cap prevents unbounded record processing, not native queue memory usage or full snapshot costs. |
-| Selected API replacement after startup | Environment signal | Descriptor audit by default; not exhaustive runtime attestation. |
+| Selected API replacement after startup | Environment signal | Descriptor audit by default; not exhaustive runtime attestation. Other checks keep running afterwards. Benign SDKs that wrap audited APIs after startup also trigger it. |
+| Typing in fields outside guarded regions | Not inspected | Only form state inside selected targets is part of the baseline, so input elsewhere does not trigger a check. |
 | Public monitor / sealed controller modification | Restricted | Frozen handles and native private fields; sealing rejects lifecycle and acceptance operations. Privileged debugging remains outside the boundary. |
 | Changes before baseline | Accepted | Start only after deciding the initial state is trustworthy. |
 | Disabled/blocked JS, DevTools overrides, compromised APIs | Not reliable | Browser control defeats the premise of a same-page monitor. |

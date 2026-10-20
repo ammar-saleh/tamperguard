@@ -1,6 +1,6 @@
 # Contributing
 
-Install with `npm ci`, install Playwright browsers, and run `npm run check`. Keep the runtime dependency-free; build/test dependencies are allowed. `src/guard-core.js` is the source of truth, and `npm run build` regenerates all shipped bundles and the integrity manifest.
+Install with `npm ci`, install Playwright browsers, and run `npm run check`. Keep the runtime dependency-free; build/test dependencies are allowed. `src/guard-core.js` is the source of truth, and `npm run build` regenerates all shipped bundles and the integrity manifest. Commit the regenerated `dist/` files and `types/index.d.mts` with your source change; CI fails when they are stale.
 
 For behavioral changes, add a browser regression that fails without the fix. Include Chromium, Firefox and WebKit where their APIs permit the feature. Add an expected-undetected test and coverage documentation for intentional boundaries rather than claiming an untested guarantee. Changes to exports, types, lifecycle or reporting also need corresponding contract tests.
 

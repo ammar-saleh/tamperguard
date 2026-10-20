@@ -1,7 +1,7 @@
 {
   "name": "tamperguard",
   "version": "0.3.0",
-  "description": "Zero-dependency client-side integrity monitor: watch the DOM and lock or report the page when it is modified.",
+  "description": "Zero-dependency client-side DOM integrity monitor: notice and report unexpected changes to selected page regions, with an opt-in page lock.",
   "main": "./dist/tamperguard.umd.js",
   "module": "./dist/tamperguard.mjs",
   "browser": "./dist/tamperguard.umd.js",
@@ -19,7 +19,8 @@
         "default": "./dist/tamperguard.umd.js"
       },
       "default": "./dist/tamperguard.umd.js"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist",
@@ -53,8 +54,7 @@
     "mutationobserver",
     "security",
     "anti-tamper",
-    "client-side",
-    "devtools"
+    "client-side"
   ],
   "author": "asaleh123",
   "license": "MIT",

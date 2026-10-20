@@ -27,10 +27,19 @@ With `watchMutations`, recorded transient DOM changes are inspected even after r
 - A collector must validate input, limit requests and storage, account for missing reports, and avoid automatic punitive actions based only on a client report. `maxReportsPerMinute` is a local convenience, not a backend abuse control.
 - Beacon uses browser credential/referrer policy. Set a suitable `Referrer-Policy` on the page and use a trusted endpoint. `reports` counts queued/attempted sends, not confirmed delivery.
 
-## Reporting a problem
+## Supported versions
 
-For reproducible implementation defects, include the library version, browser/version, options, minimal HTML, expected coverage, and observed behavior. Do not include real credentials or personal DOM content.
+| Version | Supported |
+| --- | --- |
+| 0.3.x | Yes |
+| Earlier (never published) | No |
 
-Before the public repository is established, report privately to the project owner through the channel where the package was obtained. After publication, use the repository's private vulnerability reporting feature if enabled. Do not assume an unconfigured issue tracker or address is monitored.
+## Reporting a vulnerability
 
-This release is locally regression-tested; it has not received an independent security audit. Known browser-control limitations are design boundaries rather than claims of an unfixable server-side vulnerability.
+Please report vulnerabilities privately through GitHub: open the repository's **Security** tab and choose **Report a vulnerability** ([direct link](https://github.com/asaleh123/tamperguard/security/advisories/new)). Do not open a public issue for a suspected vulnerability.
+
+Include the library version, browser and version, options, minimal HTML, the coverage you expected, and the observed behavior. Do not include real credentials or personal DOM content. You can expect an acknowledgement within 7 days. Confirmed issues are fixed in a patch release and credited in the changelog unless you prefer otherwise.
+
+What counts as a vulnerability: a flaw in the library itself, for example a way to make it leak guarded content or form values in telemetry, inject HTML through the lock screen, crash or freeze the host page, or silently stop detection in a way that contradicts the [coverage matrix](docs/COVERAGE.md). Bypasses that need control of the browser (DevTools, extensions, blocking scripts, editing state before `start()`) are documented design boundaries. Report them as regular issues if the documentation is unclear.
+
+This release is regression-tested on three browser engines; it has not received an independent security audit.

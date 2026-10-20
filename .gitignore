@@ -8,3 +8,4 @@ artifacts/
 !.env.example
 demos/*/bundle.js
 demos/*/bundle.js.LEGAL.txt
+.claude/

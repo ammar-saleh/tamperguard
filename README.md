@@ -1,35 +1,31 @@
 # TamperGuard
 
-A small, zero-runtime-dependency monitor for unexpected changes to selected DOM regions. **Reporting is the default.** Destructive page locking is an explicit option.
+[![Verify](https://github.com/asaleh123/tamperguard/actions/workflows/ci.yml/badge.svg)](https://github.com/asaleh123/tamperguard/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/tamperguard)](https://www.npmjs.com/package/tamperguard)
+[![license](https://img.shields.io/npm/l/tamperguard)](LICENSE)
 
-TamperGuard compares browser-exposed state against a baseline you choose. It is useful for modification diagnostics, integrity warnings, and demonstrations of client-side tampering. It **does not authenticate screenshots, prevent script execution, or establish a security boundary against someone who controls the browser**. It runs locally without a backend. Treat its output as a local signal, never transaction authorization.
+A small, zero-dependency monitor that notices when selected parts of a web page change unexpectedly, and tells you. **Reporting is the default.** Locking the page is an explicit, opt-in reaction.
 
-Version 0.3.0 is a breaking pre-1.0 release. See [migration notes](docs/MIGRATION.md), [coverage](docs/COVERAGE.md), and [security assumptions](SECURITY.md).
+TamperGuard is a **first layer**: a local tamper signal and deterrent, not a security boundary. Anyone who controls the browser can turn it off. Keep real validation (prices, permissions, transactions) on your server.
 
-## Try it locally
+| Good for | Not for |
+| --- | --- |
+| Noticing casual edits such as "Inspect element → change the price → screenshot" | Proving a screenshot is authentic |
+| Flagging injected overlays, swapped text or hidden content in a region you choose | Stopping a determined user, a debugger or a browser extension with full access |
+| Diagnostics: "what changed this DOM region, and when?" | Authorizing payments, scores or account changes |
+| Demonstrating and teaching client-side tampering | Replacing CSP, SRI or server-side checks |
+
+It runs entirely in the page, needs no backend, and sends nothing over the network unless you configure a `reportUrl`.
+
+## Install
 
 ```sh
-npm ci
-npm run build
-npm run serve
-```
-
-Open **http://127.0.0.1:8080/demos/**. The playground, attack matrix, and React/Vue examples use locally built assets. No CDN is needed after installation and build.
-
-## Use the library
-
-The npm release is prepared in this repository; publication is a separate maintainer action. Until published, install the verified local tarball:
-
-```sh
-npm run pack:check
-npm install /path/to/tamperguard-0.3.0.tgz
+npm install tamperguard
 ```
 
 ```js
 import TamperGuard from 'tamperguard';
-// Both CommonJS forms also work:
-// const TamperGuard = require('tamperguard');
-// const { TamperGuard } = require('tamperguard');
+// CommonJS also works: const TamperGuard = require('tamperguard');
 
 const guard = new TamperGuard({
   selector: '[data-guard]',
@@ -47,14 +43,33 @@ const guard = new TamperGuard({
 </section>
 ```
 
-For a script-tag installation, copy `dist/tamperguard.min.js` to your site and start after the protected DOM exists:
+Without a bundler, load the browser build (it defines a global `TamperGuard`) and start once the protected DOM exists:
 
 ```html
-<script src="/assets/tamperguard.min.js" defer></script>
-<script src="/assets/initialize-guard.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/tamperguard@0.3.0/dist/tamperguard.min.js"
+        integrity="sha384-REPLACE-WITH-VALUE-FROM-dist/integrity.json"
+        crossorigin="anonymous" defer></script>
+<script type="module">
+  // Module scripts run after parsing, so the guarded elements exist.
+  const guard = new TamperGuard({ selector: '[data-guard]' }).start();
+</script>
 ```
 
-`dist/integrity.json` contains sizes and SHA-384 integrity values for each build. Pin a particular release if you later use a CDN. The package supports ESM, CommonJS, a browser global, and TypeScript NodeNext imports. Importing or constructing it during SSR is safe; `start()` requires a live browser document.
+Always pin an exact version on a CDN. Copy the `integrity` value for that version from `dist/integrity.json` in the package, which lists the size and SHA-384 hash of each build. Self-hosting `dist/tamperguard.min.js` works the same way.
+
+The package supports ESM, CommonJS, a browser global, and TypeScript (NodeNext). Importing or constructing it during SSR is safe; `start()` needs a live browser document.
+
+## Before you deploy
+
+TamperGuard cannot tell a benign change from a malicious one, so most surprises come from your own page. Go through this list in **report mode** before turning on lock mode.
+
+1. **Start after third-party scripts.** By default the guard records selected browser APIs at start and reports an `environment` violation if one is replaced later. Error-monitoring, analytics and session-replay SDKs often wrap APIs such as `addEventListener`, `setInterval` or input value setters. Initialize those first, then start the guard, or set `watchEnvironment: false`. Detection keeps running after an `environment` violation, but `rebaseline()` and `update()` refuse to accept a new baseline until the APIs are restored. To recover, `destroy()` the guard and start a new one.
+2. **Check `<html>` and `<body>` attributes.** Ancestor attribute changes count as tampering (`watchAncestors: true`), because hiding a region through its parent is a common trick. Modals that add `overflow: hidden` to `<body>`, dark-mode classes on `<html>`, and language switches all trigger it. If your app does this, set `watchAncestors: false`. Moving or replacing the region is still detected.
+3. **Guard small, static regions.** Typing in a guarded form field counts as a change. Choose stable selectors (IDs or `data-*` markers), not `:hover` or `:focus`.
+4. **Accept your own changes explicitly.** Wrap approved DOM updates in `update()` or call `rebaseline()` after a known commit. See [framework integration](docs/FRAMEWORKS.md) for React and Vue.
+5. **Lock mode erases the page.** Unsaved work is lost and a refresh is required. Measure false positives with real users' extensions, translation, autofill and themes first.
+
+Read the [coverage matrix](docs/COVERAGE.md) for exactly what is and is not detected, and [SECURITY.md](SECURITY.md) for the threat model.
 
 ## Hardened local integration
 
@@ -72,17 +87,17 @@ console.log(monitor.getStatus());
 
 - Observes text, attributes, children, target removal/replacement, target-set changes, movement through ancestors, and ancestor attributes.
 - Preserves significant whitespace; snapshots without cloning custom elements or using collision-prone hashes.
-- Checks input, textarea, select, and option state; user input events trigger checks, while programmatic changes rely on a sweep or `check()`.
+- Checks input, textarea, select, and option state. User input inside a guarded region triggers a check; programmatic changes rely on a sweep or `check()`.
 - Traverses open shadow roots inside guarded targets. A known closed shadow root may be supplied as an explicit `root`.
 - Optionally checks readable stylesheet rules, disabled/media state, imports, and adopted stylesheets.
 - Optionally inspects mutation history, including edit-and-restore and identical-markup replacements; enabled by `protect()`.
-- Audits selected browser API descriptors for post-start replacement by default. Optional visibility sampling detects some external overlays.
+- Audits selected browser API descriptors for post-start replacement by default, and keeps inspecting content afterwards. Optional visibility sampling detects some external overlays.
 - Uses mutation records to resnapshot affected regions; nested selected targets are covered once. Periodic checks remain a full backstop.
 - Continues reporting changed anomalous states without accepting them as a new trusted baseline. An unchanged anomaly is not emitted on every sweep.
 
 A `targets` violation means the original set was removed, replaced, reordered, or expanded. Replacement targets are **not automatically trusted or continuously content-baselined**. Restore the original elements or explicitly accept the new set with `rebaseline()`.
 
-Detection runs after DOM mutation delivery or on a timer, not before a script executes. Pixel-only changes and inaccessible browser state remain outside coverage. Strict mutation history covers observed transient DOM changes; restored property/CSSOM changes can still be missed. Visibility sampling covers some overlays, not all visual changes. Read the [coverage matrix](docs/COVERAGE.md) before integration.
+Detection runs after DOM mutation delivery or on a timer, not before a script executes. Pixel-only changes and inaccessible browser state remain outside coverage. Strict mutation history covers observed transient DOM changes; restored property/CSSOM changes can still be missed. Visibility sampling covers some overlays, not all visual changes.
 
 ## Options
 
@@ -94,14 +109,14 @@ Detection runs after DOM mutation delivery or on a timer, not before a script ex
 | `interval` | `1000` | Sweep interval in ms. `0` disables sweeps; property, CSSOM, newly attached shadow roots, and template changes then require events or manual checks. |
 | `watchMutations` | `false` | Inspect queued mutation history, including restored edits. Enabled by `protect()`. |
 | `watchVisibility` | `false` | Compare display/visibility/opacity and five occlusion samples. May cause false positives and layout work. |
-| `watchEnvironment` | `true` | Audit selected API descriptors; report replacement and reject baseline acceptance while compromised. |
+| `watchEnvironment` | `true` | Audit selected API descriptors; report replacement and reject baseline acceptance while they differ. See [Before you deploy](#before-you-deploy). |
 | `watchStyles` | `false` | Inspect accessible stylesheets across the document and known shadow roots. This is intentionally broader than the selected content. |
 | `watchProperties` | `true` | Include live form state. Normal typing in protected fields will be a change. |
 | `watchShadowDOM` | `true` | Inspect open shadow content inside selected regions. |
-| `watchAncestors` | `true` | Detect ancestor attribute changes, including theme/language/visibility changes. Turn off only when you accept this reduction in coverage. |
+| `watchAncestors` | `true` | Detect ancestor attribute changes, including theme/language/visibility changes on `<html>` and `<body>`. Turn off if your app changes those legitimately. |
 | `guardWholeDocument` | `false` | Fall back to the owning document's body if there are no matches. Independent of the scope of `root`; use carefully. |
 | `ignoreSelectors` | `[]` | Exclude matching descendants and their entire subtrees. Does not exclude a target root itself. |
-| `ignoreAttributes` | `[]` | Explicitly exclude named attributes. |
+| `ignoreAttributes` | `[]` | Explicitly exclude named attributes everywhere, including inside targets. |
 | `ignoreAttributePrefixes` | `[]` | Explicitly exclude attribute-name prefixes. |
 | `reportUrl` | `null` | HTTP(S) collector endpoint. No network telemetry without one. |
 | `maxReportsPerMinute` | `20` | Per-instance rolling network-attempt cap. `0` disables network reports. Local events are not rate-limited. |
@@ -110,7 +125,7 @@ Detection runs after DOM mutation delivery or on a timer, not before a script ex
 
 These defaults describe the constructor; `protect()` also defaults `watchStyles` and `watchMutations` to true.
 
-Options are validated and copied; the public options object and ignore arrays are frozen. Create a new instance to change configuration. No browser extension gets an automatic trust exemption. An attacker can imitate any ignored selector or attribute, and legitimate extensions can cause real changes.
+Options are validated and copied; the public options object and ignore arrays are frozen. Unknown option names throw. Create a new instance to change configuration. No browser extension gets an automatic trust exemption. An attacker can imitate any ignored selector or attribute, and legitimate extensions can cause real changes.
 
 ## Lifecycle and approved changes
 
@@ -129,11 +144,9 @@ guard.destroy();                 // terminal cleanup; removes own wall if any
 
 `update()` checks pending changes first and refuses to run while the guard is `tampered`; resolve the violation and explicitly rebaseline before proceeding. Otherwise it accepts the synchronous callback's final state. It rejects async callbacks and Promise returns. If the callback throws, partial changes are checked against the previous baseline. Do not hide application errors or use an async function with this API.
 
-`rebaseline()` discovers replacement targets and rebuilds observation. It retains the current active/stopped state. It does not resume a stopped guard. Starting with zero matches is observable through `getStatus().targets === 0`; later matching elements produce a target-set violation. Choose stable selectors rather than `:hover`, `:focus`, or other UI-state selectors.
+`rebaseline()` discovers replacement targets and rebuilds observation. It retains the current active/stopped state. It does not resume a stopped guard. Starting with zero matches is observable through `getStatus().targets === 0`; later matching elements produce a target-set violation.
 
 Report/silent violations set status to `tampered` while `active` remains true. `rebaseline()` changes an active guard back to `watching`. Locking is terminal for that instance; refresh restores the application. `destroy()` is idempotent when unsealed. Sealed guards reject destroy, stop, update and rebaseline. Multiple lock guards from the same library instance share one wall owner. Avoid loading multiple independent copies of the library on one page.
-
-For React/Vue, align acceptance with an explicit, authorized commit; do not rebaseline on every render. See [framework integration](docs/FRAMEWORKS.md) and executable examples.
 
 ## Events and telemetry
 
@@ -152,9 +165,23 @@ Payloads contain no DOM text, input values, full page URL, path, query, or fragm
 
 ## Lock mode
 
-Locking erases the document, including unsaved work. It creates an accessible alert dialog using DOM construction, without `innerHTML`, `eval`, a Trusted Types policy, or an iframe. The wall repairs document/body/host removal and host attribute changes while active. Its closed shadow root provides style isolation, not a security boundary. On an unsealed guard, `stop()` leaves the visible wall but stops repairs; `destroy()` removes it without restoring the erased page.
+Locking erases the document, including unsaved work. It creates an accessible alert dialog using DOM construction, without `innerHTML`, `eval`, a Trusted Types policy, or an iframe. The wall repairs document/body/host removal and host attribute changes while active. Repairs triggered by other scripts are rate-limited so a script that keeps re-inserting its own element cannot freeze the tab; a one-second timer keeps repairing. Its closed shadow root provides style isolation, not a security boundary. On an unsealed guard, `stop()` leaves the visible wall but stops repairs; `destroy()` removes it without restoring the erased page.
 
-Use report mode while measuring benign changes. Broad protection can react to translation, accessibility tools, autofill, themes, hydration, and extensions. There is no universal distinction between authorized and unauthorized DOM edits.
+## Browser support
+
+Requires ES2022 (native private fields and `Object.hasOwn`): Chrome/Edge 93+, Firefox 92+, Safari 15.4+. Every release is tested on current Chromium, Firefox and WebKit through Playwright. Playwright WebKit is not a substitute for testing on physical Safari/iOS devices.
+
+## Try the demos
+
+```sh
+git clone https://github.com/asaleh123/tamperguard.git
+cd tamperguard
+npm ci
+npm run build
+npm run serve
+```
+
+Open **http://127.0.0.1:8080/demos/**. The playground, attack matrix, hardened demo and React/Vue examples use locally built assets and make no CDN requests.
 
 ## Verification and performance
 
@@ -162,13 +189,17 @@ Use report mode while measuring benign changes. Broad protection can react to tr
 npx playwright install chromium firefox webkit
 npm run check          # build, Node/package contracts, types, three browser engines
 npm run pack:check     # pack and install into a clean temporary consumer
-npm run benchmark     # reproducible synthetic measurements
+npm run benchmark      # reproducible synthetic measurements
 ```
 
-CI is configured to run the same checks. The browser suite covers private-state and sealed-controller resistance, transient mutation history, API replacement, optional occlusion sampling, detection, intentionally excluded cases, lifecycle, reporting failures, CSP/Trusted Types, and offline demos. See [local verification results](docs/VERIFICATION.md), [performance methodology](docs/PERFORMANCE.md), and [release checklist](docs/RELEASING.md). Playwright WebKit is not a substitute for testing on physical Safari/iOS devices.
+CI runs the same checks on every push and pull request. The browser suite covers private-state and sealed-controller resistance, transient mutation history, API replacement, optional occlusion sampling, detection, intentionally excluded cases, lifecycle, reporting failures, CSP/Trusted Types, and offline demos. See [verification results](docs/VERIFICATION.md), [performance methodology](docs/PERFORMANCE.md), and the [release checklist](docs/RELEASING.md).
 
 ## Positioning and prior work
 
 DOM monitoring is established prior art. [DOMtegrity](https://github.com/toreini/DOMtegrity) explores a different, server-assisted protocol and threat model. [disable-devtool](https://github.com/theajack/disable-devtool) focuses on restricting developer tools. TamperGuard's focus is a small, inspectable, scoped monitor with lifecycle control, explicit acceptance, and reproducible browser tests. It does not claim to supersede those systems or defeat browser owners.
 
-[MIT](LICENSE). Contributions should include a regression test and a precise statement of coverage.
+## Contributing and security
+
+Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Each behavior change needs a regression test and a precise statement of coverage. Please report vulnerabilities privately as described in [SECURITY.md](SECURITY.md), not in public issues.
+
+[MIT](LICENSE) © asaleh123
