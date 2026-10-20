@@ -15,6 +15,10 @@ const TG_DEFAULTS = TG_FREEZE({
   reportUrl: null, onTamper: null, maxReportsPerMinute: 20,
   ignoreSelectors: [], ignoreAttributes: [], ignoreAttributePrefixes: []
 });
+const TG_ENV_ERROR = 'Browser APIs changed after this guard started, so no new baseline can be accepted. ' +
+  'Restore them, or destroy this guard and start a new one after the integration that replaced them has loaded.';
+// Observer-driven wall repairs per second; the 1-second repair timer still runs beyond this.
+const TG_WALL_BURST = 10;
 // One wall owner per document prevents two guards from rebuilding each other's wall.
 const TG_LOCKS = new WeakMap();
 
@@ -145,7 +149,13 @@ class TamperGuard {
     };
     this.#captureIntegrity();
     this.#onResume = () => { if (this.#active && !doc.hidden) this.check(); };
-    this.#onInput = () => { if (this.#active && this.#options.watchProperties) this.check(); };
+    // Only input inside a guarded region can change snapshotted form state; typing
+    // elsewhere is left to observers and sweeps instead of forcing a full check per key.
+    this.#onInput = event => {
+      if (!this.#active || !this.#options.watchProperties) return;
+      const origin = event.composedPath?.()[0] || event.target;
+      if (this.#targets.some(t => tgContains(t.el, origin))) this.check();
+    };
   }
 
   #id(node) {
@@ -167,6 +177,7 @@ class TamperGuard {
     add(w.Document.prototype, ['querySelectorAll', 'createElement', 'styleSheets', 'adoptedStyleSheets', 'elementFromPoint']);
     add(w.ShadowRoot?.prototype, ['querySelectorAll', 'adoptedStyleSheets', 'host']);
     add(w.EventTarget.prototype, ['addEventListener', 'removeEventListener']);
+    add(w.Event.prototype, ['composedPath', 'target']);
     add(w.HTMLInputElement.prototype, ['value', 'checked', 'indeterminate']);
     add(w.HTMLTextAreaElement.prototype, ['value']);
     add(w.HTMLSelectElement.prototype, ['value', 'selectedIndex']);
@@ -400,7 +411,7 @@ class TamperGuard {
     if (['destroyed', 'locked'].includes(this.#status)) throw new Error(`Cannot start a ${this.#status} guard`);
     if (this.#active) return this;
     this.#init();
-    if (this.#options.watchEnvironment && this.#checkIntegrity()) throw new Error('Browser APIs changed; cannot establish a baseline');
+    if (this.#options.watchEnvironment && this.#checkIntegrity()) throw new Error(TG_ENV_ERROR);
     this.#baseline(); this.#active = true; this.#status = 'watching'; this.#connect();
     this.#emit('ready', { targets: this.#targets.length });
     return this;
@@ -414,7 +425,10 @@ class TamperGuard {
     const perf = this.#api.perf, started = perf(), revision = this.#revision;
     this.#metrics.checks++;
     try {
-      if (this.#options.watchEnvironment && this.#checkIntegrity()) return;
+      // Keep inspecting after an environment fault: a late, benign SDK that wraps an
+      // audited API must not silence later content signals. Stopping can only hide changes.
+      if (this.#options.watchEnvironment) this.#checkIntegrity();
+      if (!this.#active || revision !== this.#revision) return;
       const delivered = records;
       const { records: history, overflow } = this.#drainRecords(records);
       if (overflow) this.#violation('overflow', null, 'mutation-batch-limit');
@@ -475,7 +489,7 @@ class TamperGuard {
     this.#assertMutable();
     if (['destroyed', 'locked'].includes(this.#status)) throw new Error(`Cannot rebaseline a ${this.#status} guard`);
     this.#init();
-    if (this.#options.watchEnvironment && this.#checkIntegrity()) throw new Error('Browser APIs changed; cannot accept a baseline');
+    if (this.#options.watchEnvironment && this.#checkIntegrity()) throw new Error(TG_ENV_ERROR);
     const active = this.#active;
     this.#disconnect(); this.#baseline();
     if (active) { this.#status = 'watching'; this.#connect(); }
@@ -627,7 +641,16 @@ class TamperGuard {
       TG_APPLY(this.#api.focus, button, []);
       if (this.#wallObserver) TG_APPLY(this.#api.observe, this.#wallObserver, [this.#doc, { childList: true, subtree: true, attributes: true }]);
     };
-    this.#wallObserver = new this.#api.Observer(() => render()); render();
+    // A script that re-inserts its node whenever the wall removes it would otherwise
+    // ping-pong with this observer forever inside one microtask checkpoint and freeze
+    // the tab. Bound bursts; the timer below keeps repairing at least once a second.
+    let burstStart = -Infinity, burst = 0;
+    this.#wallObserver = new this.#api.Observer(() => {
+      const now = this.#api.perf();
+      if (now - burstStart >= 1000) { burstStart = now; burst = 0; }
+      if (++burst <= TG_WALL_BURST) render();
+    });
+    render();
     this.#wallTimer = this.#api.setInterval(() => {
       if (!this.#wall?.isConnected || this.#doc.body?.children.length !== 1) render();
     }, 1000);

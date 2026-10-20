@@ -135,6 +135,39 @@ for (const name of ['querySelectorAll', 'stringify', 'iterator', 'disconnect', '
   });
 }
 
+test('a late SDK-style API wrap does not silence later content detection', async ({ page }) => {
+  await protect(page);
+  const types = await page.evaluate(() => {
+    // Error-monitoring and session-replay tools commonly wrap these after page load.
+    const add = EventTarget.prototype.addEventListener;
+    EventTarget.prototype.addEventListener = function (...args) { return Reflect.apply(add, this, args); };
+    try {
+      monitor.check();
+      document.querySelector('strong').textContent = '$1.00';
+      monitor.check();
+      return events.map(e => e.type);
+    } finally { EventTarget.prototype.addEventListener = add; }
+  });
+  expect(types).toContain('environment');
+  expect(types).toContain('content');
+});
+
+test('after an environment fault a new guard can be started as documented', async ({ page }) => {
+  const result = await page.evaluate(() => {
+    const guard = new TamperGuard({ mode: 'silent', interval: 0 }).start();
+    window.setInterval = window.setInterval.bind(window);
+    let message = '';
+    try { guard.rebaseline(); } catch (error) { message = error.message; }
+    guard.destroy();
+    const next = new TamperGuard({ mode: 'silent', interval: 0 }).start();
+    const status = next.getStatus().status;
+    next.destroy();
+    return { message, status };
+  });
+  expect(result.message).toMatch(/destroy this guard/);
+  expect(result.status).toBe('watching');
+});
+
 test('environment damage cannot be accepted with rebaseline', async ({ page }) => {
   await protect(page);
   expect(await page.evaluate(() => {

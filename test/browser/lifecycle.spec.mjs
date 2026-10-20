@@ -199,6 +199,28 @@ test('lock is opt-in and reconstructs after body/html removal and host styling',
   expect(await page.evaluate(() => guard.getStatus().status)).toBe('locked');
 });
 
+test('lock wall stays responsive when another script keeps re-inserting its node', async ({ page }) => {
+  await page.evaluate(() => {
+    // Mimics an extension or widget that restores its element whenever it is removed.
+    const ensure = () => {
+      if (!document.getElementById('widget')) {
+        const el = document.createElement('div'); el.id = 'widget';
+        (document.body || document.documentElement).append(el);
+      }
+    };
+    new MutationObserver(ensure).observe(document, { childList: true, subtree: true });
+    ensure();
+  });
+  await setup(page, { mode: 'lock' });
+  const responsive = await Promise.race([
+    page.evaluate(() => { document.querySelector('strong').textContent = 'changed'; return new Promise(r => setTimeout(() => r(true), 1500)); }),
+    new Promise(r => setTimeout(() => r(false), 6000))
+  ]);
+  expect(responsive).toBe(true);
+  await expect(page.locator('[data-tamperguard-wall]')).toBeVisible();
+  expect(await page.evaluate(() => guard.getStatus().status)).toBe('locked');
+});
+
 test('callback suppression keeps monitoring without locking', async ({ page }) => {
   await page.evaluate(() => {
     window.guard = new TamperGuard({ mode: 'lock', onTamper: () => true }).start();

@@ -104,6 +104,20 @@ test('later reassignment of globals does not cancel captured timers', async ({ p
     document.querySelector('strong').textContent = 'changed';
   });
   await detected(page, 'environment');
+  // The captured sweep keeps inspecting content after the environment fault.
+  await detected(page, 'content');
+});
+
+test('typing outside guarded regions does not force full checks', async ({ page }) => {
+  await page.evaluate(() => { const input = document.createElement('input'); input.id = 'free'; document.querySelector('#outside').append(input); });
+  await start(page);
+  const before = await page.evaluate(() => guard.getStatus());
+  await page.locator('#free').pressSequentially('typing elsewhere');
+  const after = await page.evaluate(() => guard.getStatus());
+  expect(after.snapshots).toBe(before.snapshots);
+  expect(await page.evaluate(() => events.length)).toBe(0);
+  await page.locator('#target input').fill('inside');
+  await detected(page, 'content');
 });
 
 for (const [name, mutate] of Object.entries({

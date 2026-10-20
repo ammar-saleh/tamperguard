@@ -1,17 +1,17 @@
 {
   "tamperguard.umd.js": {
-    "bytes": 33816,
-    "gzipBytes": 9284,
-    "integrity": "sha384-XkZ/dCs2sk+FcvbnIOAf0Yq+3RCZD4bimGcmAa0aZO3Sq8EKGeOyFUTG04xY67sn"
+    "bytes": 34513,
+    "gzipBytes": 9823,
+    "integrity": "sha384-ElnpcBASWO/ymwcok1n0XNpne2vDJiu2DrbcBjjZvBtnhLrkd9RTjSxzIZyqpMY7"
   },
   "tamperguard.mjs": {
-    "bytes": 33545,
-    "gzipBytes": 9193,
-    "integrity": "sha384-40MCiIw1NkjvS7oQBGK4rrJFE4HHXPZkEBSk2BptyLlk1C9qE7bFg2tTbVNC7OgX"
+    "bytes": 34242,
+    "gzipBytes": 9737,
+    "integrity": "sha384-FdT6/TGJTIwQRQ5KW0J16mOPuCkCVAPCl+NTZMCQvGoIFFI724HJTbi8YZCvfE9i"
   },
   "tamperguard.min.js": {
-    "bytes": 20076,
-    "gzipBytes": 7011,
-    "integrity": "sha384-SfWV4m6wev2tWMiEqKTgO3IweLgEMrX6D486r7znF40EUrzRYD8R0vpRKmrhupLB"
+    "bytes": 20395,
+    "gzipBytes": 7173,
+    "integrity": "sha384-lsNFv/UbERf1lwZijfHIUf9rU/J3CLWz3TsV82aOSp9aqkg8WzZWVx3XOd8+Ljpu"
   }
 }
