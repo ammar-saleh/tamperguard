@@ -35,7 +35,7 @@ test('options cannot mutate shared defaults and destruction is safe before start
 });
 
 test('generated bundles and integrity manifest match source', () => {
-  const core = readFileSync(new URL('../src/guard-core.js', import.meta.url), 'utf8');
+  const core = readFileSync(new URL('../src/guard-core.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   const manifest = JSON.parse(readFileSync(new URL('../dist/integrity.json', import.meta.url)));
   for (const [name, details] of Object.entries(manifest)) {
     const data = readFileSync(new URL(`../dist/${name}`, import.meta.url));
@@ -57,6 +57,8 @@ test('demo server binds only requested interface and rejects traversal/private p
     const response = await fetch(url + '/test/fixture.html');
     assert.equal(response.status, 200); assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
     assert.equal((await fetch(url + '/', { method: 'POST' })).status, 405);
+    const home = await fetch(url + '/', { redirect: 'manual' });
+    assert.equal(home.status, 302); assert.equal(home.headers.get('location'), '/demos/');
     assert.equal(await (await fetch(url + '/test/fixture.html', { method: 'HEAD' })).text(), '');
   } finally { await new Promise(resolve => server.close(resolve)); }
 });

@@ -22,7 +22,8 @@ export function createDemoServer(root = defaultRoot) {
       if (path.includes('\\') || path.includes('\0') || path.split('/').includes('..')) {
         res.writeHead(403).end('Forbidden'); return;
       }
-      if (path === '/') path = '/demos/index.html';
+      // Redirect so relative links and styles in the demo index resolve under /demos/.
+      if (path === '/') { res.writeHead(302, { Location: '/demos/' }).end(); return; }
       if (path.endsWith('/')) path += 'index.html';
       if (!/^\/(demos|dist|test)\//.test(path) || !types[extname(path)]) { res.writeHead(404).end('Not found'); return; }
       const base = await realpath(root);
