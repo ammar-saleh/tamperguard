@@ -1,0 +1,6 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sealed local protection</title><link rel="stylesheet" href="../demo.css"><script type="module" src="app.js"></script></head>
+<body><main><a href="../index.html">All demos</a><p class="eyebrow">Local protection · sealed controller</p><h1>Try the hardened monitor.</h1><p>The controller stays inside this module. Sealing prevents its lifecycle controls from accepting updates or stopping protection until reload.</p>
+<section id="protected" data-guard class="card"><span class="badge">Protected example price</span><div class="price">$1,299.00</div></section>
+<div class="actions"><button id="edit">Edit price</button><button id="restore">Edit then immediately restore</button><button id="cover">Cover the region</button><button id="disable">Try overwriting monitor state</button></div>
+<section class="card"><h2>Status</h2><p id="result" aria-live="polite">Starting…</p></section><p class="note">This demo deliberately erases the page on a violation. Refresh to start again. The browser owner can still disable JavaScript, replace resources, or modify the execution environment; local protection raises effort, not trust.</p></main></body></html>

@@ -1,0 +1,10 @@
+node_modules/
+test-results/
+playwright-report/
+artifacts/
+*.tgz
+.env
+.env.*
+!.env.example
+demos/*/bundle.js
+demos/*/bundle.js.LEGAL.txt

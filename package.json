@@ -1,18 +1,23 @@
 {
   "name": "tamperguard",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Zero-dependency client-side integrity monitor: watch the DOM and lock or report the page when it is modified.",
   "main": "./dist/tamperguard.umd.js",
   "module": "./dist/tamperguard.mjs",
   "browser": "./dist/tamperguard.umd.js",
-  "unpkg": "./dist/tamperguard.umd.js",
-  "jsdelivr": "./dist/tamperguard.umd.js",
+  "unpkg": "./dist/tamperguard.min.js",
+  "jsdelivr": "./dist/tamperguard.min.js",
   "types": "./types/index.d.ts",
   "exports": {
     ".": {
-      "types": "./types/index.d.ts",
-      "import": "./dist/tamperguard.mjs",
-      "require": "./dist/tamperguard.umd.js",
+      "import": {
+        "types": "./types/index.d.mts",
+        "default": "./dist/tamperguard.mjs"
+      },
+      "require": {
+        "types": "./types/index.d.cts",
+        "default": "./dist/tamperguard.umd.js"
+      },
       "default": "./dist/tamperguard.umd.js"
     }
   },
@@ -21,13 +26,24 @@
     "src",
     "types",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md",
+    "SECURITY.md",
+    "docs"
   ],
   "sideEffects": false,
   "scripts": {
     "build": "node scripts/build.mjs",
     "serve": "node scripts/serve.mjs",
-    "prepublishOnly": "node scripts/build.mjs"
+    "test": "npm run build && playwright test",
+    "test:chromium": "npm run build && playwright test --project=chromium",
+    "test:package": "node --test test/package.test.mjs",
+    "test:types": "tsc -p test/types/tsconfig.json",
+    "benchmark": "npm run build && node scripts/benchmark.mjs",
+    "check": "npm run build && npm run test:package && npm run test:types && playwright test",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run check",
+    "pack:check": "npm run build && node scripts/check-package.mjs"
   },
   "keywords": [
     "tamper",
@@ -49,5 +65,13 @@
   },
   "bugs": {
     "url": "https://github.com/asaleh123/tamperguard/issues"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "esbuild": "0.28.2",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "typescript": "7.0.2",
+    "vue": "3.5.44"
   }
 }

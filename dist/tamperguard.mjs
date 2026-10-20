@@ -1,332 +1,642 @@
-/*! TamperGuard v0.1.0 | MIT License | https://github.com/asaleh123/tamperguard#readme */
-/*
- * TamperGuard core.
- *
- * A client-side integrity monitor: it snapshots the regions you mark, watches
- * them for modification (edited text/attributes, injected or removed nodes,
- * inline-style changes, and optionally stylesheet edits), and reacts — lock
- * the page, report the violation, or hand it to your own callback.
- *
- * This file is the single source of truth. The build (scripts/build.mjs) wraps
- * it into dist/tamperguard.umd.js and dist/tamperguard.esm.js. It contains no
- * import/export of its own on purpose.
- *
- * Design notes:
- *   - Fully offline. The network is never required; reportUrl is optional.
- *   - Transparent by design. No anti-debugging or obfuscation — this is an
- *     integrity check, not an evasion tool. It raises the cost of casual
- *     tampering; it is NOT a substitute for server-side validation.
- *   - Robust against monkey-patching: it captures pristine copies of the
- *     browser APIs it relies on before page code can swap them out.
+/*! TamperGuard v0.3.0 | MIT License | https://github.com/asaleh123/tamperguard#readme */
+/* TamperGuard: observable DOM integrity, not a browser trust boundary.
+ * Wrapped by scripts/build.mjs. No module-load browser effects.
  */
+const TG_FREEZE = Object.freeze;
+const TG_JSON = JSON.stringify;
+const TG_DESCRIPTOR = Object.getOwnPropertyDescriptor;
+const TG_APPLY = Reflect.apply;
+const TG_DEFAULTS = TG_FREEZE({
+  selector: '[data-guard]', root: null, mode: 'report',
+  message: 'This page changed unexpectedly. Refresh to continue.',
+  interval: 1000, watchStyles: false, watchProperties: true,
+  watchShadowDOM: true, watchAncestors: true, guardWholeDocument: false,
+  watchMutations: false, watchVisibility: false, watchEnvironment: true,
+  reportUrl: null, onTamper: null, maxReportsPerMinute: 20,
+  ignoreSelectors: [], ignoreAttributes: [], ignoreAttributePrefixes: []
+});
+// One wall owner per document prevents two guards from rebuilding each other's wall.
+const TG_LOCKS = new WeakMap();
 
-/* --- tiny, fast, non-cryptographic hash (FNV-1a, 32-bit -> 8 hex). ---------
- * A crypto hash would add no real protection here: when the attacker controls
- * the browser, they control the hashing code too. All we need is reliable
- * change-detection, which this gives cheaply. */
-function tgHash(str) {
-  var h = 0x811c9dc5;
-  for (var i = 0; i < str.length; i++) {
-    h ^= str.charCodeAt(i);
-    h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
-  }
-  return ('0000000' + h.toString(16)).slice(-8);
+function tgParent(node) { return node.parentNode || node.host || null; }
+function tgContains(parent, node) {
+  for (let current = node; current; current = tgParent(current)) if (current === parent) return true;
+  return false;
+}
+function tgAttributes(node, options) {
+  return Array.from(node.attributes, a => [a.namespaceURI, a.name, a.value])
+    .filter(a => !options.ignoreAttributes.includes(a[1]) &&
+      !options.ignoreAttributePrefixes.some(prefix => a[1].startsWith(prefix)))
+    .sort((a, b) => {
+      const left = `${a[0] || ''}\u0000${a[1]}`, right = `${b[0] || ''}\u0000${b[1]}`;
+      return left < right ? -1 : left > right ? 1 : 0;
+    });
 }
 
-/* Capture pristine browser APIs from a throwaway iframe, so later monkey-
- * patching of window.MutationObserver / timers can't blind the guard. Falls
- * back to the live window if the iframe trick isn't available. */
-function captureCleanApis() {
-  var win = null;
-  try {
-    var frame = document.createElement('iframe');
-    frame.style.display = 'none';
-    frame.setAttribute('aria-hidden', 'true');
-    (document.body || document.documentElement).appendChild(frame);
-    win = frame.contentWindow;
-    // Keep references, then drop the frame from the DOM.
-    var api = grab(win);
-    frame.remove();
-    if (api.MutationObserver) return api;
-  } catch (e) { /* fall through */ }
-  return grab(window);
+class TamperGuard {
+  #sealed = false;
+  #owners = new WeakMap();
+  #integrity = [];
+  #apiFault = '';
+  #options; #status; #active; #targets; #shadows; #shadowObservers; #ids; #nextId; #revision; #checking; #updating; #observer; #timer; #wallObserver; #wallTimer; #wall; #reportTimes; #metrics; #doc; #root; #win; #reportUrl; #api; #onResume; #onInput; #selection; #lastSelection; #style; #lastStyle;
+  get options() { return this.#options; }
+  get status() { return this.#status; }
+  static TamperGuard = TamperGuard;
+  static default = TamperGuard;
+  // Keep controller in application module scope; share only monitor if needed.
+  static protect(options = {}) {
+    if (!options || typeof options !== 'object' || Array.isArray(options)) throw new TypeError('Options must be an object');
+    if (options.reportUrl != null) throw new TypeError('protect() is local-only; omit reportUrl');
+    const guard = new TamperGuard({ watchMutations: true, watchStyles: true, ...options });
+    guard.start();
+    const monitor = TG_FREEZE(Object.assign(Object.create(null), {
+      getStatus: () => guard.getStatus(), check: () => guard.check()
+    }));
+    const controller = TG_FREEZE(Object.assign(Object.create(null), {
+      start: () => { guard.start(); }, stop: () => { guard.stop(); },
+      rebaseline: () => { guard.rebaseline(); }, update: fn => guard.update(fn),
+      seal: () => { guard.seal(); }, destroy: () => { guard.destroy(); }, lock: () => { guard.lock(); }
+    }));
+    return TG_FREEZE({ monitor, controller });
+  }
+  constructor(options = {}) {
+    if (!options || typeof options !== 'object' || Array.isArray(options)) throw new TypeError('Options must be an object');
+    for (const key of Object.keys(options)) {
+      if (!Object.hasOwn(TG_DEFAULTS, key)) throw new TypeError(`Unknown option: ${key}`);
+    }
+    const o = { ...TG_DEFAULTS, ...options };
+    if (!['lock', 'report', 'silent'].includes(o.mode)) throw new TypeError('Invalid mode');
+    if (typeof o.selector !== 'string' || !o.selector.trim()) throw new TypeError('Invalid selector');
+    if (typeof o.message !== 'string') throw new TypeError('message must be a string');
+    if (!Number.isFinite(o.interval) || o.interval < 0 || o.interval > 2147483647) throw new TypeError('Invalid interval');
+    if (!Number.isInteger(o.maxReportsPerMinute) || o.maxReportsPerMinute < 0) throw new TypeError('Invalid maxReportsPerMinute');
+    for (const key of ['watchStyles', 'watchProperties', 'watchShadowDOM', 'watchAncestors', 'guardWholeDocument', 'watchMutations', 'watchVisibility', 'watchEnvironment']) {
+      if (typeof o[key] !== 'boolean') throw new TypeError(`${key} must be boolean`);
+    }
+    for (const key of ['ignoreSelectors', 'ignoreAttributes', 'ignoreAttributePrefixes']) {
+      if (!Array.isArray(o[key]) || o[key].some(v => typeof v !== 'string' || !v.trim())) throw new TypeError(`Invalid ${key}`);
+      o[key] = TG_FREEZE([...o[key]]);
+    }
+    if (o.onTamper !== null && typeof o.onTamper !== 'function') throw new TypeError('Invalid onTamper');
+    if (o.reportUrl !== null && typeof o.reportUrl !== 'string') throw new TypeError('Invalid reportUrl');
+    this.#options = TG_FREEZE(o);
+    this.#status = 'idle';
+    this.#active = false;
+    this.#targets = [];
+    this.#shadows = new Set();
+    this.#shadowObservers = new Map();
+    this.#ids = new WeakMap();
+    this.#nextId = 1;
+    this.#revision = 0;
+    this.#checking = false;
+    this.#updating = false;
+    this.#observer = null;
+    this.#timer = null;
+    this.#wallObserver = null;
+    this.#wallTimer = null;
+    this.#wall = null;
+    this.#reportTimes = [];
+    this.#metrics = { checks: 0, snapshots: 0, violations: 0, reports: 0,
+      reportsDropped: 0, reportErrors: 0, callbackErrors: 0, inaccessibleStylesheets: 0, lastCheckMs: 0 };
+    TG_FREEZE(this);
+  }
 
-  function grab(w) {
-    return {
-      MutationObserver: w.MutationObserver,
-      setInterval: w.setInterval ? w.setInterval.bind(w) : setInterval,
-      clearInterval: w.clearInterval ? w.clearInterval.bind(w) : clearInterval,
-      setTimeout: w.setTimeout ? w.setTimeout.bind(w) : setTimeout,
-      now: (w.Date && w.Date.now) ? w.Date.now.bind(w.Date) : Date.now
+  #init() {
+    if (this.#doc) return;
+    const root = this.#options.root || (typeof document !== 'undefined' ? document : null);
+    if (!root || ![1, 9, 11].includes(root.nodeType) || !root.querySelectorAll ||
+        (root.nodeType === 11 && !root.host)) throw new TypeError('root must be a Document, Element or ShadowRoot');
+    const doc = root.nodeType === 9 ? root : root.ownerDocument;
+    const win = doc.defaultView;
+    if (!win || !win.MutationObserver) throw new Error('TamperGuard requires a browser with MutationObserver');
+    root.querySelectorAll(this.#options.selector);
+    for (const selector of this.#options.ignoreSelectors) doc.createElement('div').matches(selector);
+    let reportUrl = null;
+    if (this.#options.reportUrl !== null) {
+      const url = new URL(this.#options.reportUrl, doc.baseURI);
+      if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) throw new TypeError('reportUrl must be HTTP(S) without credentials');
+      reportUrl = url.href;
+    }
+    this.#root = root; this.#doc = doc; this.#win = win; this.#reportUrl = reportUrl;
+    // Live-realm timers keep running. Capturing only resists later global
+    // reassignment; it does not establish trust in pre-start code or prototypes.
+    this.#api = {
+      Observer: win.MutationObserver,
+      setInterval: win.setInterval.bind(win), clearInterval: win.clearInterval.bind(win),
+      now: win.Date.now.bind(win.Date), perf: win.performance.now.bind(win.performance),
+      fetch: win.fetch ? win.fetch.bind(win) : null,
+      beacon: win.navigator.sendBeacon ? win.navigator.sendBeacon.bind(win.navigator) : null,
+      observe: win.MutationObserver.prototype.observe,
+      disconnect: win.MutationObserver.prototype.disconnect,
+      takeRecords: win.MutationObserver.prototype.takeRecords,
+      style: win.getComputedStyle.bind(win),
+      rect: win.Element.prototype.getBoundingClientRect,
+      hit: win.Document.prototype.elementFromPoint,
+      createElement: doc.createElement.bind(doc),
+      appendChild: win.Node.prototype.appendChild,
+      replaceChildren: win.Element.prototype.replaceChildren,
+      setAttribute: win.Element.prototype.setAttribute,
+      removeAttribute: win.Element.prototype.removeAttribute,
+      setText: TG_DESCRIPTOR(win.Node.prototype, 'textContent').set,
+      attachShadow: win.Element.prototype.attachShadow,
+      addEventListener: win.EventTarget.prototype.addEventListener,
+      focus: win.HTMLElement.prototype.focus,
+      setAdoptedStyles: TG_DESCRIPTOR(win.Document.prototype, 'adoptedStyleSheets')?.set
     };
+    this.#captureIntegrity();
+    this.#onResume = () => { if (this.#active && !doc.hidden) this.check(); };
+    this.#onInput = () => { if (this.#active && this.#options.watchProperties) this.check(); };
   }
-}
 
-var DEFAULT_IGNORE_SELECTORS = [
-  // Common benign browser-extension nodes that mutate the DOM.
-  'grammarly-desktop-integration', 'grammarly-extension',
-  '[data-gramm]', '[data-lt-installed]'
-];
-var DEFAULT_IGNORE_ATTR_PREFIXES = [
-  'data-gr-', 'data-gramm', 'data-darkreader', 'data-lt-'
-];
-var DEFAULT_IGNORE_ATTRS = [
-  'data-new-gr-c-s-check-loaded', 'data-gr-ext-installed', 'spellcheck'
-];
+  #id(node) {
+    if (!this.#ids.has(node)) this.#ids.set(node, this.#nextId++);
+    return this.#ids.get(node);
+  }
 
-var TG_DEFAULTS = {
-  selector: '[data-guard]',
-  mode: 'lock',                 // 'lock' | 'report' | 'silent'
-  message: 'This page has been modified. Please refresh to continue.',
-  interval: 1000,               // periodic integrity sweep (ms); 0 disables
-  watchStyles: false,           // also hash same-origin stylesheet rules
-  guardWholeDocument: false,    // if no targets match, guard <body> (risky)
-  reportUrl: null,              // optional endpoint for violation beacons
-  onTamper: null,               // function(detail) -> truthy to suppress action
-  ignoreSelectors: DEFAULT_IGNORE_SELECTORS,
-  ignoreAttributes: DEFAULT_IGNORE_ATTRS,
-  ignoreAttributePrefixes: DEFAULT_IGNORE_ATTR_PREFIXES
-};
+  #captureIntegrity() {
+    const w = this.#win;
+    const add = (object, keys) => {
+      if (!object) return;
+      for (const key of keys) this.#integrity.push({ object, key, descriptor: TG_DESCRIPTOR(object, key) });
+    };
+    this.#integrity = [];
+    add(w, ['MutationObserver', 'setInterval', 'clearInterval', 'getComputedStyle', 'Object', 'Array', 'JSON', 'Reflect']);
+    add(w.MutationObserver.prototype, ['observe', 'disconnect', 'takeRecords']);
+    add(w.Node.prototype, ['nodeType', 'nodeValue', 'childNodes', 'parentNode', 'ownerDocument', 'isConnected', 'textContent', 'appendChild']);
+    add(w.Element.prototype, ['attributes', 'localName', 'namespaceURI', 'shadowRoot', 'querySelectorAll', 'matches', 'getAttributeNS', 'getBoundingClientRect', 'setAttribute', 'removeAttribute', 'attachShadow', 'replaceChildren']);
+    add(w.Document.prototype, ['querySelectorAll', 'createElement', 'styleSheets', 'adoptedStyleSheets', 'elementFromPoint']);
+    add(w.ShadowRoot?.prototype, ['querySelectorAll', 'adoptedStyleSheets', 'host']);
+    add(w.EventTarget.prototype, ['addEventListener', 'removeEventListener']);
+    add(w.HTMLInputElement.prototype, ['value', 'checked', 'indeterminate']);
+    add(w.HTMLTextAreaElement.prototype, ['value']);
+    add(w.HTMLSelectElement.prototype, ['value', 'selectedIndex']);
+    add(w.HTMLOptionElement.prototype, ['selected']);
+    add(w.CSSStyleSheet.prototype, ['cssRules', 'disabled']);
+    add(w.JSON, ['stringify']); add(w.Reflect, ['apply']); add(w.Object, ['freeze', 'getOwnPropertyDescriptor']);
+    add(w.Array, ['from']); add(w.Array.prototype, ['map', 'filter', 'some', 'includes', 'push', 'pop', 'sort', Symbol.iterator]);
+    add(this.#doc, ['querySelectorAll', 'createElement', 'styleSheets', 'elementFromPoint']);
+    if (this.#root !== this.#doc) add(this.#root, ['querySelectorAll', 'matches', 'childNodes', 'attributes']);
+  }
 
-function TamperGuard(options) {
-  options = options || {};
-  var o = {};
-  for (var k in TG_DEFAULTS) o[k] = TG_DEFAULTS[k];
-  for (var j in options) if (options.hasOwnProperty(j)) o[j] = options[j];
-  this.options = o;
+  #checkIntegrity() {
+    let fault = '';
+    // Use numeric iteration: a patched iterator must not skip the audit itself.
+    for (let i = 0; i < this.#integrity.length; i++) {
+      const entry = this.#integrity[i], before = entry.descriptor;
+      const after = TG_DESCRIPTOR(entry.object, entry.key);
+      if ((!before) !== (!after) || (before && after &&
+          (before.value !== after.value || before.get !== after.get || before.set !== after.set ||
+           before.configurable !== after.configurable || before.writable !== after.writable))) fault += `${i},`;
+    }
+    if (fault !== this.#apiFault) {
+      this.#apiFault = fault;
+      if (fault) this.#violation('environment', null, 'browser-api-replaced');
+    }
+    return fault !== '';
+  }
 
-  this.api = captureCleanApis();
-  this.targets = [];            // [{ el, hash }]
-  this.styleHash = null;
-  this.status = 'idle';         // 'idle' | 'watching' | 'tampered' | 'stopped'
-  this.observer = null;
-  this._sweep = null;
-  this._wall = null;
-  this._wallObserver = null;
-}
+  #drainRecords(delivered) {
+    const records = [];
+    let overflow = false;
+    const collect = queue => {
+      if (queue.length > 10000 - records.length) overflow = true;
+      for (let i = 0; i < queue.length && records.length < 10000; i++) records.push(queue[i]);
+    };
+    collect(delivered || []);
+    if (this.#observer) collect(TG_APPLY(this.#api.takeRecords, this.#observer, []));
+    for (const observer of this.#shadowObservers.values()) collect(TG_APPLY(this.#api.takeRecords, observer, []));
+    return { records, overflow };
+  }
 
-/* Produce the canonical, allowlist-cleaned HTML we hash. Cloning means we
- * never mutate the live page; removing allowlisted nodes/attributes keeps
- * benign extensions (Grammarly, Dark Reader, ...) from tripping the guard. */
-TamperGuard.prototype._clean = function (el) {
-  var o = this.options;
-  var clone = el.cloneNode(true);
+  #ignored(node, target) {
+    for (let current = node; current && current !== target; current = tgParent(current)) {
+      if (current.nodeType === 1 && this.#options.ignoreSelectors.some(selector => current.matches(selector))) return true;
+    }
+    return false;
+  }
 
-  o.ignoreSelectors.forEach(function (sel) {
+  #inspectHistory(records, revision) {
+    const signaled = new Set(), o = this.#options;
+    for (const record of records) {
+      if (!this.#active || revision !== this.#revision) return;
+      const target = this.#targets.find(t => t.el === this.#owners.get(record.target) || tgContains(t.el, record.target) ||
+        (o.watchAncestors && record.type === 'attributes' && tgContains(record.target, t.el)) ||
+        (record.type === 'childList' && [...record.addedNodes, ...record.removedNodes].some(n => tgContains(n, t.el))));
+      if (!target || signaled.has(target.id) || (tgContains(target.el, record.target) && this.#ignored(record.target, target.el))) continue;
+      let changed = false;
+      if (record.type === 'attributes') {
+        const name = record.attributeName;
+        if (o.ignoreAttributes.includes(name) || o.ignoreAttributePrefixes.some(prefix => name.startsWith(prefix))) continue;
+        changed = record.oldValue !== record.target.getAttributeNS(record.attributeNamespace, name);
+      } else if (record.type === 'characterData') {
+        changed = record.oldValue !== record.target.nodeValue;
+      } else if (record.type === 'childList') {
+        for (const node of [...record.addedNodes, ...record.removedNodes]) {
+          if (!this.#ignored(node, target.el)) { changed = true; break; }
+        }
+      }
+      if (changed) { signaled.add(target.id); this.#violation('mutation', target, 'unapproved-mutation-observed'); }
+    }
+  }
+
+  #visibility(el) {
+    const style = this.#api.style(el);
+    const summary = `${style.display}|${style.visibility}|${style.opacity}`;
+    const rect = TG_APPLY(this.#api.rect, el, []);
+    const w = this.#win.innerWidth, h = this.#win.innerHeight;
+    let count = 0, covered = 0;
+    // Five hit-test samples; no screenshots, layout fingerprint or pixel hashing.
+    for (const [dx, dy] of [[0.5, 0.5], [0.2, 0.2], [0.8, 0.2], [0.2, 0.8], [0.8, 0.8]]) {
+      const x = rect.left + rect.width * dx, y = rect.top + rect.height * dy;
+      if (!rect.width || !rect.height || x < 0 || y < 0 || x >= w || y >= h) continue;
+      count++;
+      const hit = TG_APPLY(this.#api.hit, this.#doc, [x, y]);
+      // Document hit-testing retargets shadow content to its host.
+      if (!hit || (!tgContains(el, hit) && !(hit.shadowRoot && tgContains(hit, el)))) covered++;
+    }
+    return { style: summary, covered: count ? covered / count : null };
+  }
+
+  #select() {
+    const list = Array.from(this.#root.querySelectorAll(this.#options.selector));
+    if (this.#root.nodeType === 1 && this.#root.matches(this.#options.selector)) list.unshift(this.#root);
+    if (!list.length && this.#options.guardWholeDocument && this.#doc.body) list.push(this.#doc.body);
+    const selected = new Set(list);
+    return list.filter(el => {
+      for (let p = tgParent(el); p; p = tgParent(p)) if (selected.has(p)) return false;
+      return true;
+    });
+  }
+
+  #snapshot(el) {
+    this.#metrics.snapshots++;
+    const tokens = [], stack = [el], o = this.#options;
+    while (stack.length) {
+      const node = stack.pop();
+      if (node === null) { tokens.push('/'); continue; }
+      if (node.nodeType === 1) {
+        if (node !== el && o.ignoreSelectors.some(selector => node.matches(selector))) continue;
+        if (o.watchMutations) this.#owners.set(node, el);
+        tokens.push('element', node.namespaceURI, node.localName, tgAttributes(node, o));
+        if (o.watchProperties) {
+          if (node.localName === 'input') tokens.push('input', node.value, node.checked, node.indeterminate);
+          if (node.localName === 'textarea') tokens.push('textarea', node.value);
+          if (node.localName === 'option') tokens.push('option', node.selected);
+          if (node.localName === 'select') tokens.push('select', node.selectedIndex, node.value);
+        }
+        stack.push(null);
+        if (o.watchShadowDOM && node.shadowRoot) { this.#observeShadow(node.shadowRoot); stack.push(node.shadowRoot); }
+        const children = node.localName === 'template' && node.content ? node.content.childNodes : node.childNodes;
+        for (let i = children.length - 1; i >= 0; i--) stack.push(children[i]);
+      } else if (node.nodeType === 11) {
+        if (o.watchMutations) this.#owners.set(node, el);
+        tokens.push('shadow', node.mode || 'fragment'); stack.push(null);
+        for (let i = node.childNodes.length - 1; i >= 0; i--) stack.push(node.childNodes[i]);
+      } else {
+        if (o.watchMutations) this.#owners.set(node, el);
+        tokens.push(node.nodeType, node.nodeValue);
+      }
+    }
+    // Exact comparison preserves whitespace and avoids hash collisions.
+    return TG_JSON(tokens);
+  }
+
+  #observeShadow(root) {
+    this.#shadows.add(root);
+    if (this.#observer && root !== this.#root && !this.#shadowObservers.has(root)) {
+      const observer = new this.#api.Observer(records => this.#check(records));
+      TG_APPLY(this.#api.observe, observer, [root, this.#observerOptions()]);
+      this.#shadowObservers.set(root, observer);
+    }
+  }
+
+  #pruneShadows() {
+    for (const root of this.#shadows) {
+      if (root !== this.#root && !this.#targets.some(t => tgContains(t.el, root.host))) {
+        const observer = this.#shadowObservers.get(root);
+        if (observer) TG_APPLY(this.#api.disconnect, observer, []);
+        this.#shadowObservers.delete(root); this.#shadows.delete(root);
+      }
+    }
+  }
+
+  #structure(el) {
+    const chain = [];
+    for (let node = tgParent(el); node; node = tgParent(node)) {
+      chain.push(this.#id(node));
+      if (this.#options.watchAncestors && node.nodeType === 1) chain.push(tgAttributes(node, this.#options));
+    }
+    return TG_JSON([el.isConnected, this.#id(el.ownerDocument), chain]);
+  }
+
+  #styles() {
+    const out = [], seen = new Set();
+    let inaccessible = 0;
+    const visit = sheet => {
+      if (seen.has(sheet)) { out.push('reference', this.#id(sheet)); return; }
+      seen.add(sheet);
+      out.push('sheet', this.#id(sheet), sheet.href, sheet.disabled, sheet.media?.mediaText || '');
+      try {
+        for (const rule of Array.from(sheet.cssRules)) { out.push(rule.cssText); if (rule.styleSheet) visit(rule.styleSheet); }
+      } catch { inaccessible++; out.push('inaccessible'); }
+    };
+    for (const root of [this.#doc, ...this.#shadows]) {
+      if (root !== this.#doc && !root.host?.isConnected) continue;
+      out.push('scope', this.#id(root));
+      for (const sheet of Array.from(root.styleSheets || [])) visit(sheet);
+      for (const sheet of Array.from(root.adoptedStyleSheets || [])) visit(sheet);
+    }
+    this.#metrics.inaccessibleStylesheets = inaccessible;
+    return TG_JSON(out);
+  }
+
+  #baseline() {
+    this.#shadows.clear();
+    this.#owners = new WeakMap();
+    if (this.#root.nodeType === 11) this.#shadows.add(this.#root);
+    this.#targets = this.#select().map(el => {
+      const content = this.#snapshot(el), structure = this.#structure(el);
+      const visibility = this.#options.watchVisibility ? this.#visibility(el) : null;
+      return { el, id: this.#id(el), content, structure, visibility, lastVisibility: '', lastContent: content, lastStructure: structure };
+    });
+    this.#selection = TG_JSON(this.#targets.map(t => t.id));
+    this.#lastSelection = this.#selection;
+    this.#style = this.#options.watchStyles ? this.#styles() : null;
+    this.#lastStyle = this.#style;
+    this.#revision++;
+  }
+
+  #observerOptions() {
+    return { subtree: true, childList: true, characterData: true, attributes: true,
+      attributeOldValue: this.#options.watchMutations, characterDataOldValue: this.#options.watchMutations };
+  }
+
+  #connect() {
+    this.#observer = new this.#api.Observer(records => this.#check(records));
+    TG_APPLY(this.#api.observe, this.#observer, [this.#doc, this.#observerOptions()]);
+    if (this.#root !== this.#doc) TG_APPLY(this.#api.observe, this.#observer, [this.#root, this.#observerOptions()]);
+    for (const shadow of this.#shadows) this.#observeShadow(shadow);
+    if (this.#options.interval > 0) this.#timer = this.#api.setInterval(() => this.check(), this.#options.interval);
+    this.#doc.addEventListener('visibilitychange', this.#onResume);
+    this.#win.addEventListener('pageshow', this.#onResume);
+    this.#doc.addEventListener('input', this.#onInput, true);
+    this.#doc.addEventListener('change', this.#onInput, true);
+  }
+
+  #disconnect() {
+    if (this.#observer) TG_APPLY(this.#api.disconnect, this.#observer, []);
+    this.#observer = null;
+    for (const observer of this.#shadowObservers.values()) TG_APPLY(this.#api.disconnect, observer, []);
+    this.#shadowObservers.clear();
+    if (this.#timer !== null) this.#api.clearInterval(this.#timer);
+    this.#timer = null;
+    this.#doc?.removeEventListener('visibilitychange', this.#onResume);
+    this.#win?.removeEventListener('pageshow', this.#onResume);
+    this.#doc?.removeEventListener('input', this.#onInput, true);
+    this.#doc?.removeEventListener('change', this.#onInput, true);
+  }
+
+  start() {
+    if (['destroyed', 'locked'].includes(this.#status)) throw new Error(`Cannot start a ${this.#status} guard`);
+    if (this.#active) return this;
+    this.#init();
+    if (this.#options.watchEnvironment && this.#checkIntegrity()) throw new Error('Browser APIs changed; cannot establish a baseline');
+    this.#baseline(); this.#active = true; this.#status = 'watching'; this.#connect();
+    this.#emit('ready', { targets: this.#targets.length });
+    return this;
+  }
+
+  check() { this.#check(null); }
+
+  #check(records) {
+    if (!this.#active || this.#checking || this.#updating) return;
+    this.#checking = true;
+    const perf = this.#api.perf, started = perf(), revision = this.#revision;
+    this.#metrics.checks++;
     try {
-      var found = clone.querySelectorAll(sel);
-      for (var i = 0; i < found.length; i++) found[i].remove();
-    } catch (e) { /* bad selector, ignore */ }
-  });
-
-  (function strip(node) {
-    if (node.nodeType === 1) {
-      o.ignoreAttributes.forEach(function (a) { node.removeAttribute(a); });
-      var attrs = Array.prototype.slice.call(node.attributes);
-      attrs.forEach(function (attr) {
-        for (var p = 0; p < o.ignoreAttributePrefixes.length; p++) {
-          if (attr.name.indexOf(o.ignoreAttributePrefixes[p]) === 0) {
-            node.removeAttribute(attr.name);
-            return;
+      if (this.#options.watchEnvironment && this.#checkIntegrity()) return;
+      const delivered = records;
+      const { records: history, overflow } = this.#drainRecords(records);
+      if (overflow) this.#violation('overflow', null, 'mutation-batch-limit');
+      if (this.#options.watchMutations) this.#inspectHistory(history, revision);
+      if (!this.#active || revision !== this.#revision) return;
+      // Null means a full scan; drained records never narrow a requested sweep.
+      records = delivered === null || overflow ? null : history;
+      const selection = TG_JSON(this.#select().map(el => this.#id(el)));
+      if (selection !== this.#lastSelection) {
+        this.#lastSelection = selection;
+        if (selection !== this.#selection) this.#violation('targets', null, 'selection-changed');
+      }
+      for (const target of this.#targets) {
+        if (!this.#active || revision !== this.#revision) return;
+        const structure = this.#structure(target.el);
+        if (structure !== target.lastStructure) {
+          target.lastStructure = structure;
+          if (structure !== target.structure) this.#violation('structure', target, 'placement-or-ancestor-changed');
+        }
+        if (!this.#active || revision !== this.#revision) return;
+        if (this.#options.watchVisibility) {
+          const current = this.#visibility(target.el);
+          const signature = TG_JSON(current);
+          if (signature !== target.lastVisibility) {
+            target.lastVisibility = signature;
+            if (current.style !== target.visibility.style ||
+                (current.covered !== null && target.visibility.covered !== null && current.covered > target.visibility.covered)) {
+              this.#violation('visibility', target, 'visibility-or-occlusion-changed');
+            }
           }
         }
-      });
-      var kids = Array.prototype.slice.call(node.children);
-      kids.forEach(strip);
-    }
-  })(clone);
-
-  return clone.outerHTML.replace(/\s+/g, ' ').trim();
-};
-
-TamperGuard.prototype._hashStyles = function () {
-  var out = '';
-  var sheets;
-  try { sheets = document.styleSheets; } catch (e) { return ''; }
-  for (var i = 0; i < sheets.length; i++) {
-    try {
-      var rules = sheets[i].cssRules; // throws for cross-origin sheets
-      for (var r = 0; r < rules.length; r++) out += rules[r].cssText;
-    } catch (e) { /* cross-origin / inaccessible: skip */ }
-  }
-  return tgHash(out);
-};
-
-TamperGuard.prototype.start = function () {
-  var self = this;
-  var o = this.options;
-
-  var list = Array.prototype.slice.call(document.querySelectorAll(o.selector));
-  if (list.length === 0) {
-    if (o.guardWholeDocument && document.body) {
-      list = [document.body];
-    } else {
-      if (typeof console !== 'undefined') {
-        console.warn('[TamperGuard] no elements matched "' + o.selector +
-          '"; nothing is being guarded.');
+        if (!this.#active || revision !== this.#revision) return;
+        if (!records || records.some(record => tgContains(target.el, record.target))) {
+          const content = this.#snapshot(target.el);
+          if (content !== target.lastContent) {
+            target.lastContent = content;
+            if (content !== target.content) this.#violation('content', target, 'snapshot-changed');
+          }
+        }
       }
-      return this;
+      if (this.#active && revision === this.#revision) this.#pruneShadows();
+      if (this.#active && revision === this.#revision && this.#options.watchStyles) {
+        const style = this.#styles();
+        if (style !== this.#lastStyle) {
+          this.#lastStyle = style;
+          if (style !== this.#style) this.#violation('style', null, 'stylesheet-changed');
+        }
+      }
+    } catch {
+      this.#violation('error', null, 'inspection-failed');
+    } finally {
+      this.#metrics.lastCheckMs = perf() - started;
+      this.#checking = false;
     }
   }
 
-  this.targets = list.map(function (el) {
-    return { el: el, hash: tgHash(self._clean(el)) };
-  });
-  if (o.watchStyles) this.styleHash = this._hashStyles();
-
-  // Fast path: react the instant the DOM changes.
-  if (this.api.MutationObserver) {
-    this.observer = new this.api.MutationObserver(function () { self.check(); });
-    list.forEach(function (el) {
-      self.observer.observe(el, {
-        childList: true, subtree: true, attributes: true, characterData: true
-      });
-    });
+  rebaseline() {
+    this.#assertMutable();
+    if (['destroyed', 'locked'].includes(this.#status)) throw new Error(`Cannot rebaseline a ${this.#status} guard`);
+    this.#init();
+    if (this.#options.watchEnvironment && this.#checkIntegrity()) throw new Error('Browser APIs changed; cannot accept a baseline');
+    const active = this.#active;
+    this.#disconnect(); this.#baseline();
+    if (active) { this.#status = 'watching'; this.#connect(); }
+    return this;
   }
 
-  // Backstop: a periodic sweep guarantees detection even if the observer is
-  // disconnected or removed, and is the only way to catch stylesheet edits.
-  if (o.interval > 0) {
-    this._sweep = this.api.setInterval(function () { self.check(); }, o.interval);
-  }
-
-  this.status = 'watching';
-  this._emit('ready', { targets: this.targets.length });
-  return this;
-};
-
-TamperGuard.prototype.check = function () {
-  if (this.status === 'tampered' || this.status === 'stopped') return;
-  for (var i = 0; i < this.targets.length; i++) {
-    var t = this.targets[i];
-    if (tgHash(this._clean(t.el)) !== t.hash) {
-      return this._violation('content', t.el);
+  update(fn) {
+    this.#assertMutable();
+    if (!this.#active || this.#updating) throw new Error('update requires an active guard and cannot be nested');
+    if (typeof fn !== 'function' || fn.constructor?.name === 'AsyncFunction') throw new TypeError('update requires a synchronous function');
+    this.check();
+    if (!this.#active) throw new Error('Guard stopped before update');
+    if (this.#status === 'tampered') throw new Error('Resolve the violation and explicitly rebaseline before update');
+    this.#updating = true;
+    try {
+      const result = fn();
+      if (result && typeof result.then === 'function') throw new TypeError('update cannot return a Promise');
+      this.rebaseline();
+      return result;
+    } finally {
+      this.#updating = false; this.check();
     }
   }
-  if (this.options.watchStyles && this._hashStyles() !== this.styleHash) {
-    return this._violation('style', null);
+
+  stop() {
+    this.#assertMutable();
+    return this.#halt();
   }
-};
 
-/* Accept the current state as the new baseline — call after a change YOU made
- * on purpose (e.g. a framework re-render), to avoid a false positive. */
-TamperGuard.prototype.rebaseline = function () {
-  var self = this;
-  this.targets.forEach(function (t) { t.hash = tgHash(self._clean(t.el)); });
-  if (this.options.watchStyles) this.styleHash = this._hashStyles();
-  return this;
-};
-
-TamperGuard.prototype.stop = function () {
-  if (this.observer) { this.observer.disconnect(); this.observer = null; }
-  if (this._sweep) { this.api.clearInterval(this._sweep); this._sweep = null; }
-  if (this.status !== 'tampered') this.status = 'stopped';
-  return this;
-};
-
-TamperGuard.prototype.getStatus = function () {
-  return { status: this.status, targets: this.targets.length };
-};
-
-TamperGuard.prototype._violation = function (type, el) {
-  if (this.status === 'tampered') return;
-  this.status = 'tampered';
-  this.stop();
-
-  var detail = {
-    type: type,                       // 'content' | 'style'
-    selector: this.options.selector,
-    url: (typeof location !== 'undefined') ? location.href : '',
-    at: this.api.now()
-  };
-  this._emit('violation', detail);
-  if (this.options.reportUrl) this._report(detail);
-
-  // onTamper can inspect the violation and return truthy to suppress the
-  // built-in reaction (useful for custom UX).
-  var suppressed = false;
-  if (typeof this.options.onTamper === 'function') {
-    try { suppressed = this.options.onTamper(detail); } catch (e) {}
+  #halt() {
+    this.#active = false; this.#disconnect(); this.#stopWall();
+    if (!['locked', 'destroyed'].includes(this.#status)) this.#status = 'stopped';
+    return this;
   }
-  if (suppressed) return;
 
-  if (this.options.mode === 'lock') this.lock();
-  // 'report' and 'silent' take no visible action beyond the callback/beacon.
-};
+  destroy() {
+    this.#assertMutable();
+    this.#halt(); this.#wall?.remove(); this.#wall = null;
+    if (this.#doc && TG_LOCKS.get(this.#doc) === this) TG_LOCKS.delete(this.#doc);
+    this.#targets = []; this.#shadows.clear(); this.#ids = new WeakMap();
+    this.#owners = new WeakMap(); this.#integrity = [];
+    this.#doc = null; this.#win = null; this.#root = null; this.#api = null;
+    this.#status = 'destroyed';
+  }
 
-TamperGuard.prototype._report = function (detail) {
-  try {
-    var body = JSON.stringify(detail);
-    if (navigator && navigator.sendBeacon) {
-      navigator.sendBeacon(this.options.reportUrl, body);
-    } else if (typeof fetch === 'function') {
-      fetch(this.options.reportUrl, {
-        method: 'POST', keepalive: true,
-        headers: { 'Content-Type': 'application/json' }, body: body
-      });
+  getStatus() {
+    return { status: this.#status, active: this.#active, sealed: this.#sealed, targets: this.#targets.length,
+      observers: Number(!!this.#observer) + this.#shadowObservers.size + Number(!!this.#wallObserver),
+      timers: Number(this.#timer !== null) + Number(this.#wallTimer !== null), ...this.#metrics };
+  }
+
+  #assertMutable() { if (this.#sealed) throw new Error('Guard is permanently sealed; reload the document to reset'); }
+
+  seal() {
+    if (this.#sealed) return this;
+    this.check();
+    if (!this.#active || this.#status !== 'watching' || this.#targets.length === 0) {
+      throw new Error('Only an active, clean guard with targets can be sealed');
     }
-  } catch (e) { /* reporting is best-effort and must never throw */ }
-};
+    this.#sealed = true;
+    return this;
+  }
 
-TamperGuard.prototype._emit = function (name, detail) {
-  try {
-    if (typeof CustomEvent === 'function' && typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('tamperguard:' + name, { detail: detail }));
+  #violation(type, target, reason) {
+    if (!this.#active) return;
+    this.#status = 'tampered'; this.#metrics.violations++;
+    const detail = TG_FREEZE({ type, reason, targetId: target?.id ?? null,
+      selector: this.#options.selector, at: this.#api.now(), origin: this.#win.location.origin });
+    // Never include DOM content, input values or page path/query/hash.
+    this.#emit('violation', detail);
+    if (!this.#active) return;
+    if (this.#options.mode !== 'silent' && this.#reportUrl) this.#report(detail);
+    let suppressed = false;
+    try { suppressed = Boolean(this.#options.onTamper?.(detail)); }
+    catch { this.#metrics.callbackErrors++; }
+    if (this.#active && (!suppressed || this.#sealed) && this.#options.mode === 'lock') this.lock();
+  }
+
+  #report(detail) {
+    const now = this.#api.perf();
+    this.#reportTimes = this.#reportTimes.filter(t => now - t < 60000);
+    if (this.#reportTimes.length >= this.#options.maxReportsPerMinute) { this.#metrics.reportsDropped++; return; }
+    this.#reportTimes.push(now);
+    const body = TG_JSON(detail);
+    try {
+      if (this.#api.beacon?.(this.#reportUrl, body)) { this.#metrics.reports++; return; }
+    } catch { /* Rejected beacons still get a fetch attempt. */ }
+    if (!this.#api.fetch) { this.#metrics.reportErrors++; return; }
+    try {
+      this.#metrics.reports++;
+      Promise.resolve(this.#api.fetch(this.#reportUrl, { method: 'POST', body,
+        headers: { 'Content-Type': 'text/plain;charset=UTF-8' }, keepalive: true,
+        credentials: 'same-origin', referrerPolicy: 'no-referrer' }))
+        .then(response => { if (!response.ok) this.#metrics.reportErrors++; })
+        .catch(() => { this.#metrics.reportErrors++; });
+    } catch { this.#metrics.reportErrors++; }
+  }
+
+  #emit(name, detail) {
+    try { this.#win.dispatchEvent(new this.#win.CustomEvent(`tamperguard:${name}`, { detail })); }
+    catch { /* Events must not interrupt inspection. */ }
+  }
+
+  #stopWall() {
+    if (this.#wallObserver) TG_APPLY(this.#api.disconnect, this.#wallObserver, []);
+    this.#wallObserver = null;
+    if (this.#wallTimer !== null) this.#api.clearInterval(this.#wallTimer);
+    this.#wallTimer = null;
+  }
+
+  lock() {
+    if (this.#status === 'destroyed') throw new Error('Cannot lock a destroyed guard');
+    if (this.#status === 'locked') return;
+    this.#init(); this.#halt(); this.#status = 'locked';
+    if (TG_LOCKS.has(this.#doc) && TG_LOCKS.get(this.#doc) !== this) {
+      this.#emit('lock', { message: this.#options.message });
+      return;
     }
-  } catch (e) {}
-};
-
-/* Wipe the page and draw a self-healing lock wall. The wall lives in a closed
- * shadow root so page scripts/styles can't easily reach into it, and it is
- * redrawn if removed — so deleting it in DevTools just leaves a blank page. */
-TamperGuard.prototype.lock = function () {
-  var self = this;
-  try { document.documentElement.innerHTML = ''; } catch (e) {}
-  if (!document.body) {
-    document.documentElement.appendChild(document.createElement('body'));
+    TG_LOCKS.set(this.#doc, this);
+    // Explicit opt-in destructive reaction. No HTML injection sinks or eval.
+    const append = (parent, child) => TG_APPLY(this.#api.appendChild, parent, [child]);
+    const attr = (node, name, value) => TG_APPLY(this.#api.setAttribute, node, [name, value]);
+    const text = (node, value) => TG_APPLY(this.#api.setText, node, [value]);
+    const render = () => {
+      if (this.#wallObserver) TG_APPLY(this.#api.disconnect, this.#wallObserver, []);
+      let html = this.#doc.documentElement;
+      if (!html) { html = this.#api.createElement('html'); append(this.#doc, html); }
+      TG_APPLY(this.#api.removeAttribute, html, ['style']);
+      TG_APPLY(this.#api.removeAttribute, html, ['hidden']);
+      TG_APPLY(this.#api.removeAttribute, html, ['inert']);
+      if (this.#api.setAdoptedStyles) TG_APPLY(this.#api.setAdoptedStyles, this.#doc, [[]]);
+      const head = this.#api.createElement('head');
+      const title = this.#api.createElement('title'); text(title, 'Page changed'); append(head, title);
+      const body = this.#api.createElement('body'), host = this.#api.createElement('div');
+      attr(host, 'data-tamperguard-wall', '');
+      attr(host, 'style', 'position:fixed;inset:0;z-index:2147483647;display:block;visibility:visible;opacity:1');
+      const root = this.#api.attachShadow ? TG_APPLY(this.#api.attachShadow, host, [{ mode: 'closed' }]) : host;
+      const panel = this.#api.createElement('section');
+      attr(panel, 'role', 'alertdialog'); attr(panel, 'aria-modal', 'true');
+      attr(panel, 'aria-labelledby', 'tg-title'); attr(panel, 'aria-describedby', 'tg-message');
+      attr(panel, 'style', 'position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px;box-sizing:border-box;background:#10121a;color:white;font:16px system-ui;text-align:center');
+      const heading = this.#api.createElement('h1'); attr(heading, 'id', 'tg-title'); text(heading, 'Page changed unexpectedly');
+      const message = this.#api.createElement('p'); attr(message, 'id', 'tg-message'); text(message, this.#options.message);
+      const button = this.#api.createElement('button'); text(button, 'Refresh');
+      attr(button, 'style', 'padding:12px 24px;font:inherit;cursor:pointer');
+      TG_APPLY(this.#api.addEventListener, button, ['click', () => this.#win.location.reload()]);
+      append(panel, heading); append(panel, message); append(panel, button); append(root, panel); append(body, host);
+      TG_APPLY(this.#api.replaceChildren, html, [head, body]); this.#wall = host;
+      TG_APPLY(this.#api.focus, button, []);
+      if (this.#wallObserver) TG_APPLY(this.#api.observe, this.#wallObserver, [this.#doc, { childList: true, subtree: true, attributes: true }]);
+    };
+    this.#wallObserver = new this.#api.Observer(() => render()); render();
+    this.#wallTimer = this.#api.setInterval(() => {
+      if (!this.#wall?.isConnected || this.#doc.body?.children.length !== 1) render();
+    }, 1000);
+    this.#emit('lock', { message: this.#options.message });
   }
-  this._emit('lock', { message: this.options.message });
+}
 
-  function render() {
-    var host = document.createElement('div');
-    host.setAttribute('style', 'position:fixed;inset:0;z-index:2147483647');
-    var root;
-    try { root = host.attachShadow({ mode: 'closed' }); }
-    catch (e) { root = host; }
-    root.innerHTML =
-      '<div style="position:fixed;inset:0;display:flex;flex-direction:column;' +
-      'align-items:center;justify-content:center;gap:14px;padding:24px;' +
-      'box-sizing:border-box;background:#0b0b0f;color:#fff;text-align:center;' +
-      'font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif">' +
-      '<div style="font-size:52px">&#128274;</div>' +
-      '<div style="font-size:22px;font-weight:600">Tamper detected</div>' +
-      '<div style="opacity:.75;max-width:460px;line-height:1.5">' +
-      escapeHtml(self.options.message) + '</div>' +
-      '<button id="tg-refresh" style="margin-top:8px;padding:10px 18px;border:0;' +
-      'border-radius:8px;background:#fff;color:#0b0b0f;font-size:15px;' +
-      'font-weight:600;cursor:pointer">Refresh</button></div>';
-    var btn = root.querySelector ? root.querySelector('#tg-refresh') : null;
-    if (btn) btn.addEventListener('click', function () { location.reload(); });
-    document.body.appendChild(host);
-    self._wall = host;
-  }
-
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"]/g, function (c) {
-      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
-    });
-  }
-
-  render();
-  if (this.api.MutationObserver) {
-    this._wallObserver = new this.api.MutationObserver(function () {
-      if (self._wall && !document.body.contains(self._wall)) render();
-    });
-    this._wallObserver.observe(document.documentElement, {
-      childList: true, subtree: true
-    });
-  }
-};
+TG_FREEZE(TamperGuard.prototype);
+TG_FREEZE(TamperGuard);
 
 export { TamperGuard };
 export default TamperGuard;

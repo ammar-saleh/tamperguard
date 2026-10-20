@@ -1,66 +1,87 @@
-// Type definitions for TamperGuard v0.1
-
 export type TamperGuardMode = 'lock' | 'report' | 'silent';
-
+export type ViolationType = 'content' | 'structure' | 'targets' | 'style' | 'mutation' | 'environment' | 'visibility' | 'overflow' | 'error';
 export interface TamperViolation {
-  /** What changed. */
-  type: 'content' | 'style';
-  /** The selector being guarded. */
-  selector: string;
-  /** The page URL at the time of detection. */
-  url: string;
-  /** Timestamp (ms) from a pristine Date.now. */
-  at: number;
+  readonly type: ViolationType;
+  readonly reason: string;
+  readonly targetId: number | null;
+  readonly selector: string;
+  readonly origin: string;
+  readonly at: number;
 }
-
 export interface TamperGuardOptions {
-  /** CSS selector for the regions to protect. Default: '[data-guard]'. */
   selector?: string;
-  /** Reaction on tamper. Default: 'lock'. */
+  root?: Document | Element | ShadowRoot | null;
   mode?: TamperGuardMode;
-  /** Message shown on the lock wall. */
   message?: string;
-  /** Periodic integrity-sweep interval in ms. 0 disables. Default: 1000. */
   interval?: number;
-  /** Also hash same-origin stylesheet rules (catches CSS edits). Default: false. */
   watchStyles?: boolean;
-  /** If no element matches `selector`, guard <body> instead. Default: false. */
+  watchProperties?: boolean;
+  watchShadowDOM?: boolean;
+  watchAncestors?: boolean;
+  watchMutations?: boolean;
+  watchVisibility?: boolean;
+  watchEnvironment?: boolean;
   guardWholeDocument?: boolean;
-  /** Optional endpoint; violations are POSTed/beaconed here. */
   reportUrl?: string | null;
-  /** Called with the violation. Return a truthy value to suppress the built-in reaction. */
   onTamper?: ((detail: TamperViolation) => unknown) | null;
-  /** Descendant selectors to strip before hashing (benign extensions). */
-  ignoreSelectors?: string[];
-  /** Attribute names to strip before hashing. */
-  ignoreAttributes?: string[];
-  /** Attribute name prefixes to strip before hashing. */
-  ignoreAttributePrefixes?: string[];
+  maxReportsPerMinute?: number;
+  ignoreSelectors?: readonly string[];
+  ignoreAttributes?: readonly string[];
+  ignoreAttributePrefixes?: readonly string[];
 }
-
 export interface TamperGuardStatus {
-  status: 'idle' | 'watching' | 'tampered' | 'stopped';
+  status: 'idle' | 'watching' | 'tampered' | 'stopped' | 'locked' | 'destroyed';
+  active: boolean;
+  sealed: boolean;
+  observers: number;
+  timers: number;
   targets: number;
+  checks: number;
+  snapshots: number;
+  violations: number;
+  reports: number;
+  reportsDropped: number;
+  reportErrors: number;
+  callbackErrors: number;
+  inaccessibleStylesheets: number;
+  lastCheckMs: number;
 }
-
 export class TamperGuard {
+  /** Local-only factory. Keep controller private; share only monitor. */
+  static protect(options?: Omit<TamperGuardOptions, 'reportUrl'>): TamperProtection;
   constructor(options?: TamperGuardOptions);
-  options: Required<TamperGuardOptions>;
-  status: TamperGuardStatus['status'];
-  /** Snapshot the targets and begin watching. */
+  readonly options: Readonly<Required<TamperGuardOptions>>;
+  readonly status: TamperGuardStatus['status'];
   start(): this;
-  /** Run an integrity check now. */
   check(): void;
-  /** Accept the current DOM as the new baseline (after a change you made). */
   rebaseline(): this;
-  /** Stop watching (does not remove a lock wall). */
+  /** Synchronous mutations only. Async framework commits must use rebaseline. */
+  update<T>(fn: () => T extends PromiseLike<unknown> ? never : T): T;
   stop(): this;
-  /** Current status and target count. */
+  destroy(): void;
   getStatus(): TamperGuardStatus;
-  /** Wipe the page and draw the self-healing lock wall. */
+  /** Permanently disable lifecycle/acceptance controls until page reload. */
+  seal(): this;
+  /** Destructive, explicit opt-in. A refresh is required to restore the page. */
   lock(): void;
 }
-
+export interface TamperMonitor {
+  readonly getStatus: () => TamperGuardStatus;
+  readonly check: () => void;
+}
+export interface TamperController {
+  readonly start: () => void;
+  readonly stop: () => void;
+  readonly destroy: () => void;
+  readonly rebaseline: () => void;
+  readonly update: <T>(fn: () => T extends PromiseLike<unknown> ? never : T) => T;
+  readonly seal: () => void;
+  readonly lock: () => void;
+}
+export interface TamperProtection {
+  readonly monitor: Readonly<TamperMonitor>;
+  readonly controller: Readonly<TamperController>;
+}
 export default TamperGuard;
 
 declare global {
