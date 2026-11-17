@@ -56,15 +56,15 @@
     "anti-tamper",
     "client-side"
   ],
-  "author": "asaleh123",
+  "author": "Ammar Saleh",
   "license": "MIT",
-  "homepage": "https://github.com/asaleh123/tamperguard#readme",
+  "homepage": "https://github.com/ammar-saleh/tamperguard#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/asaleh123/tamperguard.git"
+    "url": "git+https://github.com/ammar-saleh/tamperguard.git"
   },
   "bugs": {
-    "url": "https://github.com/asaleh123/tamperguard/issues"
+    "url": "https://github.com/ammar-saleh/tamperguard/issues"
   },
   "devDependencies": {
     "@playwright/test": "1.64.1",

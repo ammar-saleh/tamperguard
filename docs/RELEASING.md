@@ -5,17 +5,18 @@ Nothing in this repository publishes automatically. Each step below is a deliber
 ## First publication
 
 1. Confirm `git rev-parse --show-toplevel` prints this project directory, not an enclosing folder.
-2. Create an empty public GitHub repository named `tamperguard` under the account in `package.json` (`asaleh123`). Do not add a README or license there; this repository already has them.
+2. Create an empty public GitHub repository named `tamperguard` under the account in `package.json` (`ammar-saleh`). Do not add a README or license there; this repository already has them.
 3. Push:
 
    ```sh
-   git remote add origin https://github.com/asaleh123/tamperguard.git
+   git remote add origin https://github.com/ammar-saleh/tamperguard.git
    git push -u origin main
    ```
 
 4. On GitHub, open **Settings → Code security** and enable **Private vulnerability reporting** (SECURITY.md links to it). Confirm the **Verify** workflow runs and passes on the push.
 5. Check that the npm name is still free: `npm view tamperguard` should return a 404. A 404 is not a reservation; publish soon after checking.
 6. Continue with the steps for every release.
+7. After the first npm publication, change the README's Quick start to `npm install tamperguard` and add a pinned CDN example (`https://cdn.jsdelivr.net/npm/tamperguard@<version>/dist/tamperguard.min.js`) with the `integrity` value from `dist/integrity.json`. Until then the README must not advertise an npm name that nobody owns.
 
 ## Every release
 

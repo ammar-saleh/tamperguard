@@ -36,7 +36,7 @@ With `watchMutations`, recorded transient DOM changes are inspected even after r
 
 ## Reporting a vulnerability
 
-Please report vulnerabilities privately through GitHub: open the repository's **Security** tab and choose **Report a vulnerability** ([direct link](https://github.com/asaleh123/tamperguard/security/advisories/new)). Do not open a public issue for a suspected vulnerability.
+Please report vulnerabilities privately through GitHub: open the repository's **Security** tab and choose **Report a vulnerability** ([direct link](https://github.com/ammar-saleh/tamperguard/security/advisories/new)). Do not open a public issue for a suspected vulnerability.
 
 Include the library version, browser and version, options, minimal HTML, the coverage you expected, and the observed behavior. Do not include real credentials or personal DOM content. You can expect an acknowledgement within 7 days. Confirmed issues are fixed in a patch release and credited in the changelog unless you prefer otherwise.
 
