@@ -17,7 +17,7 @@ The baseline is captured by `start()`, `rebaseline()`, or a successful `update()
 | Same-origin iframe | Explicit document only | Create a separate guard using `iframe.contentDocument`. Navigation destroys its browsing context; attach a new guard after navigation. Outer frame presence/attributes require guarding its containing region. |
 | Cross-origin iframe | Not inspected | Same-origin policy remains in force. |
 | Template content | Full check | Template changes are not guaranteed to deliver a document observer record. |
-| Stylesheet insertion/removal | Optional | `watchStyles`; styles affect the entire document, so this may report changes unrelated to a target. |
+| Stylesheet insertion/removal, `<style>` text and `<link>`/`<style>` attribute edits | Optional | `watchStyles`; inspected when the mutation is delivered. Styles affect the entire document, so this may report changes unrelated to a target. |
 | CSSOM rule changes, disabled/media state | Optional full check | `watchStyles` and a nonzero interval or manual `check()`. |
 | Adopted stylesheets | Optional full check | Document and known guarded shadow roots; stylesheet ordering and identity count. |
 | Imported CSS | Optional, readable only | Recursively inspects accessible imported stylesheets. |

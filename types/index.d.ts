@@ -44,6 +44,8 @@ export interface TamperGuardStatus {
   reportErrors: number;
   callbackErrors: number;
   inaccessibleStylesheets: number;
+  /** Times the accessible stylesheets were read (only with `watchStyles`). */
+  styleReads: number;
   lastCheckMs: number;
 }
 export class TamperGuard {

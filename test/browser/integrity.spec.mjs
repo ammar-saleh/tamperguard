@@ -134,6 +134,31 @@ for (const [name, mutate] of Object.entries({
   });
 }
 
+test('unrelated mutation deliveries do not re-read stylesheets', async ({ page }) => {
+  await start(page, { watchStyles: true });
+  const before = await page.evaluate(() => guard.getStatus());
+  for (let i = 0; i < 20; i++) {
+    await page.evaluate(i => { document.querySelector('#outside').textContent = `tick ${i}`; }, i);
+  }
+  const after = await page.evaluate(() => guard.getStatus());
+  expect(after.checks).toBeGreaterThan(before.checks);
+  expect(after.styleReads).toBe(before.styleReads);
+  expect(after.status).toBe('watching');
+});
+
+for (const [name, mutate] of Object.entries({
+  'inserted style element': () => { const s = document.createElement('style'); s.textContent = '[data-guard]{display:none}'; document.head.append(s); },
+  'style element nested in inserted markup': () => { const d = document.createElement('div'); d.innerHTML = '<p><style>[data-guard]{opacity:0}</style></p>'; document.querySelector('#outside').append(d); },
+  'edited style text': () => { document.querySelector('#styles').textContent = '[data-guard]{color:red}'; },
+  'edited style text node': () => { document.querySelector('#styles').firstChild.data = '[data-guard]{color:red}'; },
+  'removed style element': () => document.querySelector('#styles').remove(),
+  'style media attribute': () => document.querySelector('#styles').setAttribute('media', 'print')
+})) {
+  test(`mutation delivery detects ${name} without a sweep`, async ({ page }) => {
+    await start(page, { watchStyles: true }); await page.evaluate(mutate); await detected(page, 'style');
+  });
+}
+
 test('input events detect values with interval disabled', async ({ page }) => {
   await start(page); await page.locator('input').fill('new value'); await detected(page, 'content');
 });

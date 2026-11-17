@@ -100,7 +100,7 @@ class TamperGuard {
     this.#wall = null;
     this.#reportTimes = [];
     this.#metrics = { checks: 0, snapshots: 0, violations: 0, reports: 0,
-      reportsDropped: 0, reportErrors: 0, callbackErrors: 0, inaccessibleStylesheets: 0, lastCheckMs: 0 };
+      reportsDropped: 0, reportErrors: 0, callbackErrors: 0, inaccessibleStylesheets: 0, styleReads: 0, lastCheckMs: 0 };
     TG_FREEZE(this);
   }
 
@@ -340,6 +340,7 @@ class TamperGuard {
   }
 
   #styles() {
+    this.#metrics.styleReads++;
     const out = [], seen = new Set();
     let inaccessible = 0;
     const visit = sheet => {
@@ -358,6 +359,24 @@ class TamperGuard {
     }
     this.#metrics.inaccessibleStylesheets = inaccessible;
     return TG_JSON(out);
+  }
+
+  // Reading every stylesheet is the most expensive inspection. A mutation delivery repeats
+  // it only when a record involves a <style> or <link>; CSSOM-only edits never produce a
+  // record and are left to the sweep, as documented.
+  #touchesStyles(records) {
+    const sheet = node => node.nodeType === 1 && (node.localName === 'style' || node.localName === 'link');
+    for (let i = 0; i < records.length; i++) {
+      const record = records[i], target = record.target;
+      if (sheet(target) || (target.parentNode && sheet(target.parentNode))) return true;
+      if (record.type !== 'childList') continue;
+      for (const list of [record.addedNodes, record.removedNodes]) {
+        for (let j = 0; j < list.length; j++) {
+          if (sheet(list[j]) || (list[j].nodeType === 1 && list[j].querySelector('style,link'))) return true;
+        }
+      }
+    }
+    return false;
   }
 
   #baseline() {
@@ -469,7 +488,8 @@ class TamperGuard {
         }
       }
       if (this.#active && revision === this.#revision) this.#pruneShadows();
-      if (this.#active && revision === this.#revision && this.#options.watchStyles) {
+      if (this.#active && revision === this.#revision && this.#options.watchStyles &&
+          (!records || this.#touchesStyles(records))) {
         const style = this.#styles();
         if (style !== this.#lastStyle) {
           this.#lastStyle = style;

@@ -18,6 +18,7 @@ First public release. A local tamper signal with no server requirement and no cl
 - An `environment` violation (for example a monitoring SDK wrapping `addEventListener` after start) no longer stops all later checks. Content, structure and target changes keep being reported.
 - The lock wall no longer freezes the tab when another script or extension keeps re-inserting its own element; observer-driven repairs are rate-limited and the one-second repair timer continues.
 - Typing in form fields outside guarded regions no longer forces a full check on every keystroke.
+- With `watchStyles` (the default in `protect()`), every stylesheet was re-read on each mutation delivery anywhere in the document. On a page with a large stylesheet and frequent unrelated updates this used a large share of the main thread. Deliveries now re-read styles only when a `<style>` or `<link>` element is involved; sweeps still cover CSSOM edits. `getStatus()` gains a `styleReads` counter.
 - Builds normalize line endings, so bundles and SRI hashes are identical on Windows, macOS and Linux checkouts.
 - Clearer error when a baseline cannot be accepted after an API replacement, including how to recover.
 
