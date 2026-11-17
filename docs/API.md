@@ -69,3 +69,39 @@ Payloads contain no DOM text, input values, full page URL, path, query, or fragm
 ## Lock mode
 
 Locking erases the document, including unsaved work. It creates an accessible alert dialog using DOM construction, without `innerHTML`, `eval`, a Trusted Types policy, or an iframe. The wall repairs document/body/host removal and host attribute changes while active. Repairs triggered by other scripts are rate-limited so a script that keeps re-inserting its own element cannot freeze the tab; a one-second timer keeps repairing. Its closed shadow root provides style isolation, not a security boundary. On an unsealed guard, `stop()` leaves the visible wall but stops repairs; `destroy()` removes it without restoring the erased page.
+
+## Detection and behavior
+
+- Observes text, attributes, children, target removal/replacement, target-set changes, movement through ancestors, and ancestor attributes.
+- Preserves significant whitespace; snapshots without cloning custom elements or using collision-prone hashes.
+- Checks input, textarea, select, and option state. User input inside a guarded region triggers a check; programmatic changes rely on a sweep or `check()`.
+- Traverses open shadow roots inside guarded targets. A known closed shadow root may be supplied as an explicit `root`.
+- Optionally checks readable stylesheet rules, disabled/media state, imports, and adopted stylesheets.
+- Optionally inspects mutation history, including edit-and-restore and identical-markup replacements; enabled by `protect()`.
+- Audits selected browser API descriptors for post-start replacement by default, and keeps inspecting content afterwards. Optional visibility sampling detects some external overlays.
+- Uses mutation records to resnapshot affected regions; nested selected targets are covered once. Periodic checks remain a full backstop.
+- Continues reporting changed anomalous states without accepting them as a new trusted baseline. An unchanged anomaly is not emitted on every sweep.
+
+A `targets` violation means the original set was removed, replaced, reordered, or expanded. Replacement targets are **not automatically trusted or continuously content-baselined**. Restore the original elements or explicitly accept the new set with `rebaseline()`.
+
+Detection runs after DOM mutation delivery or on a timer, not before a script executes. Pixel-only changes and inaccessible browser state remain outside coverage. Strict mutation history covers observed transient DOM changes; restored property/CSSOM changes can still be missed. Visibility sampling covers some overlays, not all visual changes.
+
+## Hardened local integration
+
+Use `TamperGuard.protect()` for separate frozen monitor/controller handles, mutation-history checks and stylesheet inspection. Keep the controller in module scope; share only the monitor. The factory rejects a telemetry endpoint.
+
+```js
+const { monitor, controller } = TamperGuard.protect({ mode: 'report' });
+console.log(monitor.getStatus());
+// For a static screen only: controller.seal();
+```
+
+`seal()` permanently blocks stop, destroy and baseline acceptance on that instance until reload. It does not enable lock mode by itself. For the sealed lock example, tradeoffs and bypass boundaries, read [local hardening](HARDENING.md). Native private state and frozen public objects protect ordinary property access; they cannot defeat privileged debugging or script blocking.
+
+## Browser support
+
+Requires ES2022 (native private fields and `Object.hasOwn`): Chrome/Edge 93+, Firefox 92+, Safari 15.4+. Every release is tested on current Chromium, Firefox and WebKit through Playwright. Playwright WebKit is not a substitute for testing on physical Safari/iOS devices.
+
+## Positioning and prior work
+
+DOM monitoring is established prior art. [DOMtegrity](https://github.com/toreini/DOMtegrity) explores a different, server-assisted protocol and threat model. [disable-devtool](https://github.com/theajack/disable-devtool) focuses on restricting developer tools. TamperGuard's focus is a small, inspectable, scoped monitor with lifecycle control, explicit acceptance, and reproducible browser tests. It does not claim to supersede those systems or defeat browser owners.

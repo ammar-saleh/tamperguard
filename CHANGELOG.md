@@ -11,6 +11,7 @@ First public release. A local tamper signal with no server requirement and no cl
 - Default selected browser API audit, captured observer operations and lock rendering methods.
 - Optional five-point visibility/occlusion sampling, with documented coverage and performance limits.
 - Hardened static demo, private framework controllers, three-engine adversarial tests and benchmarks for three profiles.
+- A sample store checkout page (`demos/store`) for trying the guard with real DevTools.
 - TypeScript declarations for ESM and CommonJS, SHA-384 integrity manifest, and security/coverage/hardening documentation.
 
 ### Fixed before release

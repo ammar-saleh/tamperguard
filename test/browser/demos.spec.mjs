@@ -10,6 +10,21 @@ test('plain HTML playground reports and supports approved updates', async ({ pag
   await expect(page.locator('h1')).toHaveText('Try to change the evidence.');
 });
 
+test('store demo reports an outside edit and locks in lock mode', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await page.goto('/demos/store/');
+  await expect(page.locator('#status-text')).toHaveText('Order summary is protected');
+  await page.evaluate(() => { document.querySelector('#total').textContent = '$1.00'; });
+  await expect(page.locator('#status')).toHaveClass(/alert/);
+  await expect(page.locator('#place')).toBeDisabled();
+  await expect(page.locator('#log')).toContainText('content');
+  await page.goto('/demos/store/?mode=lock');
+  await page.evaluate(() => { document.querySelector('#total').textContent = '$1.00'; });
+  await expect(page.locator('[data-tamperguard-wall]')).toBeAttached();
+  expect(errors).toEqual([]);
+});
+
 test('interactive matrix passes and cannot be double-started', async ({ page }) => {
   await page.goto('/test/break-it.html'); await page.locator('#run').click();
   await expect(page.locator('#run')).toBeDisabled();

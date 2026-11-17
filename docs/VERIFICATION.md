@@ -4,7 +4,7 @@ Verified on November 17, 2026, in the Windows development workspace. These resul
 
 | Check | Result |
 | --- | --- |
-| Browser regression suite | 357 passed: 119 scenarios in each of Chromium, Firefox and WebKit |
+| Browser regression suite | 360 passed: 120 scenarios in each of Chromium, Firefox and WebKit |
 | Node/package contract tests | 5 passed |
 | TypeScript NodeNext consumers | ESM and CommonJS positive/negative checks passed |
 | Packed consumer installation | Local tarball installed into a fresh temporary project; ESM/CommonJS imports passed |
@@ -12,7 +12,7 @@ Verified on November 17, 2026, in the Windows development workspace. These resul
 | Dependency advisory check | `npm audit` reported zero known vulnerabilities at verification time |
 | Distribution integrity | Generated SHA-384 manifest checked against all three bundles; builds normalize line endings so hashes match across operating systems |
 | Local documentation links | All resolved |
-| Demo review | Index, playground, hardened, attack matrix, React and Vue demos checked in light and dark color schemes and at 390px width, with no console errors or sideways scrolling; the interactive attack matrix passed 15/15 |
+| Demo review | Index, store checkout, playground, hardened, attack matrix, React and Vue demos checked in light and dark color schemes and at 390px width, with no console errors or sideways scrolling; the interactive attack matrix passed 15/15 |
 
 Coverage includes frozen/private state, read-only handles, permanent sealing, restored DOM edits, bounded mutation storms, selected API replacement (including continued detection after a late SDK-style wrap), captured lock rendering, lock-wall responsiveness against a re-inserting script, input-event scoping, stylesheet reads limited to stylesheet mutations and sweeps, optional occlusion detection, local-only networking, lifecycle cleanup, explicit updates, callback reentrancy, shadow DOM, stylesheets, live form properties, strict browser policies, offline framework examples, and deliberately undetected boundary cases.
 
